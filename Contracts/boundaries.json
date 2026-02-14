@@ -1,0 +1,95 @@
+{
+  "description": "Layer boundary rules for Forge audit script (A4). Each layer defines a directory glob and a list of forbidden patterns. The audit script scans files matching the glob for forbidden patterns.",
+  "layers": [
+    {
+      "name": "entry",
+      "description": "CLI entry point and console output. Boots the bot, parses config, starts event loop. No strategy logic, no broker calls, no DB access.",
+      "glob": "app/main.py",
+      "forbidden": [
+        {
+          "pattern": "oandapyV20|v20\\.|api\\.request",
+          "reason": "Broker API calls belong in the broker client, not the entry point"
+        },
+        {
+          "pattern": "sqlite3|aiosqlite",
+          "reason": "DB access belongs in repos, not the entry point"
+        }
+      ]
+    },
+    {
+      "name": "strategy",
+      "description": "S/R zone detection, entry signal evaluation, session filter. Pure functions — no I/O of any kind.",
+      "glob": "app/strategy/*.py",
+      "forbidden": [
+        {
+          "pattern": "oandapyV20|v20\\.|httpx|requests",
+          "reason": "Broker/HTTP calls belong in the broker client, not strategy"
+        },
+        {
+          "pattern": "sqlite3|aiosqlite",
+          "reason": "DB access belongs in repos, not strategy"
+        },
+        {
+          "pattern": "os\\.environ|dotenv",
+          "reason": "Config/environment access belongs in the entry layer, not strategy"
+        }
+      ]
+    },
+    {
+      "name": "broker",
+      "description": "All OANDA v20 REST API communication. No strategy logic, no DB access, no risk calculations.",
+      "glob": "app/broker/*.py",
+      "forbidden": [
+        {
+          "pattern": "sqlite3|aiosqlite",
+          "reason": "DB access belongs in repos, not the broker client"
+        }
+      ]
+    },
+    {
+      "name": "risk",
+      "description": "Position sizing, SL/TP calculation, drawdown tracking. Pure math — no broker calls, no DB writes.",
+      "glob": "app/risk/*.py",
+      "forbidden": [
+        {
+          "pattern": "oandapyV20|v20\\.|httpx|requests",
+          "reason": "Broker/HTTP calls belong in the broker client, not risk manager"
+        },
+        {
+          "pattern": "sqlite3|aiosqlite",
+          "reason": "DB access belongs in repos, not risk manager"
+        }
+      ]
+    },
+    {
+      "name": "repos",
+      "description": "Data access layer — SQLite queries only. No strategy logic, no broker calls, no HTTP.",
+      "glob": "app/repos/*.py",
+      "forbidden": [
+        {
+          "pattern": "oandapyV20|v20\\.|httpx|requests",
+          "reason": "Broker/HTTP calls belong in the broker client, not repos"
+        },
+        {
+          "pattern": "fastapi|APIRouter",
+          "reason": "HTTP framework imports belong in the API layer, not repos"
+        }
+      ]
+    },
+    {
+      "name": "routers",
+      "description": "Internal FastAPI endpoints (health, status, trades). Parse request, call service, return response. No business logic, no DB access.",
+      "glob": "app/api/*.py",
+      "forbidden": [
+        {
+          "pattern": "sqlite3|aiosqlite",
+          "reason": "DB access belongs in repos, not routers"
+        },
+        {
+          "pattern": "oandapyV20|v20\\.",
+          "reason": "Broker API calls belong in the broker client, not routers"
+        }
+      ]
+    }
+  ]
+}

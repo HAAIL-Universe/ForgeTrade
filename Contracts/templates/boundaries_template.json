@@ -1,0 +1,55 @@
+{
+  "description": "Layer boundary rules for Forge audit script (A4). Each layer defines a directory glob and a list of forbidden patterns. The audit script scans files matching the glob for forbidden patterns.",
+  "layers": [
+    {
+      "name": "routers",
+      "description": "HTTP layer — parse request, call service, return response. No business logic, no DB access, no LLM calls.",
+      "glob": "app/api/routers/*.py",
+      "forbidden": [
+        {
+          "pattern": "sqlalchemy",
+          "reason": "DB access belongs in repos, not routers"
+        },
+        {
+          "pattern": "openai",
+          "reason": "LLM calls belong in the LLM wrapper, not routers"
+        },
+        {
+          "pattern": "\\bSELECT\\b",
+          "reason": "Raw SQL belongs in repos"
+        },
+        {
+          "pattern": "\\bINSERT\\b",
+          "reason": "Raw SQL belongs in repos"
+        },
+        {
+          "pattern": "\\bUPDATE\\b",
+          "reason": "Raw SQL belongs in repos"
+        },
+        {
+          "pattern": "\\bDELETE\\b",
+          "reason": "Raw SQL belongs in repos"
+        }
+      ]
+    },
+    {
+      "name": "repos",
+      "description": "Data access layer — DB queries and transactions only. No business logic, no LLM calls, no HTTP concerns.",
+      "glob": "app/repos/*.py",
+      "forbidden": [
+        {
+          "pattern": "openai",
+          "reason": "LLM calls belong in the LLM wrapper, not repos"
+        },
+        {
+          "pattern": "httpx",
+          "reason": "HTTP client calls belong in services or dedicated clients, not repos"
+        },
+        {
+          "pattern": "fastapi",
+          "reason": "HTTP framework imports belong in routers, not repos"
+        }
+      ]
+    }
+  ]
+}

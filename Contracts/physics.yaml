@@ -1,0 +1,95 @@
+# ForgeTrade — API Physics (v0.1)
+# Canonical API specification. If it's not here, it doesn't exist.
+# Format: Simplified OpenAPI-style YAML.
+#
+# NOTE: ForgeTrade is primarily a CLI bot. These endpoints are an
+# internal control plane running on localhost for Forge verification
+# gates and optional diagnostics. The bot's real work happens in the
+# async trading loop, not via HTTP requests.
+
+info:
+  title: "ForgeTrade Internal API"
+  version: "0.1.0"
+  description: "Internal health and status endpoints for ForgeTrade bot"
+
+paths:
+
+  # ── Health ──────────────────────────────────────────────────
+
+  /health:
+    get:
+      summary: "Health check (required by Forge verification gates)"
+      auth: none
+      response:
+        status: "ok"
+
+  # ── Bot Status ─────────────────────────────────────────────
+
+  /status:
+    get:
+      summary: "Return current bot state — mode, equity, positions, drawdown"
+      auth: none
+      response:
+        mode: string
+        running: boolean
+        pair: string
+        equity: number | null
+        balance: number | null
+        peak_equity: number | null
+        drawdown_pct: number | null
+        circuit_breaker_active: boolean
+        open_positions: integer
+        last_signal_check: datetime | null
+        uptime_seconds: number
+
+  # ── Trade History ──────────────────────────────────────────
+
+  /trades:
+    get:
+      summary: "Return recent trade log entries"
+      auth: none
+      query_params:
+        limit: integer (default 20)
+        status: string (optional, filter by open/closed)
+      response:
+        trades: TradeRecord[]
+        total: integer
+
+# ── Schemas ──────────────────────────────────────────────────
+
+schemas:
+
+  HealthResponse:
+    status: string
+
+  BotStatus:
+    mode: string           # "backtest" | "paper" | "live"
+    running: boolean
+    pair: string
+    equity: number | null
+    balance: number | null
+    peak_equity: number | null
+    drawdown_pct: number | null
+    circuit_breaker_active: boolean
+    open_positions: integer
+    last_signal_check: datetime | null
+    uptime_seconds: number
+
+  TradeRecord:
+    id: integer
+    mode: string
+    direction: string      # "buy" | "sell"
+    pair: string
+    entry_price: number
+    exit_price: number | null
+    stop_loss: number
+    take_profit: number
+    units: number
+    sr_zone_price: number
+    sr_zone_type: string   # "support" | "resistance"
+    entry_reason: string
+    exit_reason: string | null
+    pnl: number | null
+    status: string         # "open" | "closed" | "cancelled"
+    opened_at: datetime
+    closed_at: datetime | null

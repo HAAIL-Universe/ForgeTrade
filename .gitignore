@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+web/dist/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Environment
+.env
+.env.local
+
+# Data
+data/*.db
+
+# Test artifacts
+test-results/
+
+# Environment
+*.egg
+playwright-report/
+.pytest_cache/
+htmlcov/
+coverage.xml
+
+# Self
+Forge/

@@ -1,0 +1,17 @@
+{
+  "project_name": "ForgeTrade",
+  "backend": {
+    "language": "python",
+    "entry_module": "app.main",
+    "test_framework": "pytest",
+    "test_dir": "tests",
+    "dependency_file": "requirements.txt",
+    "venv_path": ".venv"
+  },
+  "frontend": {
+    "enabled": false,
+    "dir": null,
+    "build_cmd": null,
+    "test_cmd": null
+  }
+}

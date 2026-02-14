@@ -1,0 +1,79 @@
+# {PROJECT_NAME} — API Physics (v0.1)
+# Canonical API specification. If it's not here, it doesn't exist.
+# Format: Simplified OpenAPI-style YAML.
+
+info:
+  title: "{PROJECT_NAME} API"
+  version: "0.1.0"
+  description: "{SHORT_DESCRIPTION}"
+
+# ── DIRECTOR NOTES ──────────────────────────────────────────────
+# Define every endpoint the MVP needs. Each endpoint must map to
+# a feature in blueprint.md §2 (Must Ship).
+#
+# For each endpoint, specify:
+#   - HTTP method
+#   - Path
+#   - Purpose (1 sentence)
+#   - Request body schema (if applicable)
+#   - Response schema
+#   - Auth requirement
+#
+# Keep response schemas minimal but explicit. The builder uses
+# these to create Pydantic models / TypeScript types / Go structs.
+# ────────────────────────────────────────────────────────────────
+
+paths:
+
+  # ── Health ──────────────────────────────────────────────────
+
+  /health:
+    get:
+      summary: "Health check"
+      auth: none
+      response:
+        status: "ok"
+
+  # ── Auth (if applicable) ───────────────────────────────────
+
+  # /auth/me:
+  #   get:
+  #     summary: "Return current user info from JWT"
+  #     auth: bearer
+  #     response:
+  #       user_id: string
+  #       email: string
+
+  # ── Core endpoints ─────────────────────────────────────────
+
+  # /resource:
+  #   get:
+  #     summary: "List resources"
+  #     auth: bearer
+  #     response:
+  #       items: ResourceItem[]
+  #
+  #   post:
+  #     summary: "Create a resource"
+  #     auth: bearer
+  #     request:
+  #       name: string (required)
+  #       description: string (optional)
+  #     response:
+  #       id: uuid
+  #       name: string
+  #       created_at: datetime
+
+# ── Schemas ──────────────────────────────────────────────────
+
+schemas:
+
+  # ResourceItem:
+  #   id: uuid
+  #   name: string
+  #   description: string | null
+  #   created_at: datetime
+  #   updated_at: datetime
+
+  HealthResponse:
+    status: string
