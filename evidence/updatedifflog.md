@@ -1,46 +1,44 @@
 # Diff Log (overwrite each cycle)
 
 ## Cycle Metadata
-- Timestamp: 2026-02-14T12:16:00Z
+- Timestamp: 2026-02-14T12:20:00Z
 - Branch: master
-- HEAD: (Phase 1 pending commit)
+- HEAD: Phase 2 pending commit
 - Diff basis: staged
 
 ## Cycle Status
 - Status: COMPLETE
 
 ## Verification
-- Static: PASS — `python -m compileall app/` clean, no errors
-- Runtime: PASS — App boots, GET /health returns 200 {"status":"ok"}
-- Behavior: PASS — pytest 11 passed (1 health + 5 config + 5 broker tests)
-- Contract: PASS — No boundary violations in app/broker/ (no sqlite3/DB imports). Physics /health present.
+- Static: PASS — `python -m compileall app/` clean
+- Runtime: PASS — App boots, /health returns 200
+- Behavior: PASS — pytest 21 passed (1 health + 5 config + 5 broker + 10 strategy)
+- Contract: PASS — No boundary violations in app/strategy/ (no I/O imports)
 
 ## Summary
-- Phase 1: OANDA Broker Client implementation
-- Created app/config.py — loads .env, validates required vars, typed Config dataclass with oanda_base_url property
-- Created app/broker/models.py — Candle, AccountSummary, OrderRequest, OrderResponse, Position dataclasses
-- Created app/broker/oanda_client.py — async OandaClient wrapping v20 REST API (fetch_candles, get_account_summary, place_order, list_open_positions, close_position)
-- Created tests/test_config.py — 5 tests covering loading, defaults, missing vars, environment switching
-- Created tests/test_broker.py — 5 tests with mocked httpx responses covering candle parsing, account summary, order payload, positions, env switching
-- Updated requirements.txt to add pytest-asyncio
-- Updated pytest.ini to add asyncio_mode = auto
-- Updated forge.json venv_path to ../.venv (correct relative path for this repo layout)
+- Phase 2: Strategy Engine implementation
+- Created app/strategy/models.py — CandleData, SRZone, EntrySignal dataclasses
+- Created app/strategy/sr_zones.py — swing high/low detection, zone clustering, detect_sr_zones()
+- Created app/strategy/signals.py — zone touch detection, rejection wick evaluation, evaluate_signal()
+- Created app/strategy/session_filter.py — is_in_session() pure function
+- Created app/strategy/indicators.py — calculate_atr() pure function
+- Created tests/test_strategy.py — 10 deterministic tests covering S/R detection, buy/sell signals, no-signal cases, session filter, ATR, determinism
 
 ## Files Changed (staged)
-- app/config.py
-- app/broker/models.py
-- app/broker/oanda_client.py
-- tests/test_config.py
-- tests/test_broker.py
-- requirements.txt
-- pytest.ini
-- forge.json
+- app/strategy/models.py
+- app/strategy/sr_zones.py
+- app/strategy/signals.py
+- app/strategy/session_filter.py
+- app/strategy/indicators.py
+- tests/test_strategy.py
 - evidence/test_runs.md
 - evidence/test_runs_latest.md
 - evidence/updatedifflog.md
+- evidence/audit_ledger.md
 
 ## Notes (optional)
-- None
+- All strategy functions are pure — no I/O, no environment, no broker calls
+- Determinism verified by test: same input produces identical output
 
 ## Next Steps
-- Begin Phase 2 — Strategy Engine
+- Begin Phase 3 — Risk Manager + Order Execution
