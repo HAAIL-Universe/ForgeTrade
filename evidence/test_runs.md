@@ -207,3 +207,27 @@ A  tests/test_config.py
  1 file changed, 4 insertions(+), 1 deletion(-)
 ```
 
+## Test Run 2026-02-14T12:37:50Z
+- Status: PASS
+- Start: 2026-02-14T12:37:50Z
+- End: 2026-02-14T12:37:54Z
+- Runtime: Z:\ForgeTrade\Forge\..\.venv\Scripts\python.exe
+- Branch: master
+- HEAD: a3deb8b7be3ab64eeb97046079cd1f3d2fed1e82
+- compileall exit: 0
+- import_sanity exit: 0
+- pytest exit: 0
+- pytest summary: 58 passed in 1.77s
+- git status -sb:
+```
+## master
+?? app/backtest/engine.py
+?? app/backtest/stats.py
+?? app/repos/backtest_repo.py
+?? tests/test_backtest.py
+```
+- git diff --stat:
+```
+
+```
+
