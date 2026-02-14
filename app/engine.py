@@ -4,6 +4,8 @@ Connects strategy, risk management, and broker into a single polling loop.
 Fetch candles → evaluate signal → check risk → place order.
 """
 
+import asyncio
+import logging
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -18,6 +20,8 @@ from app.strategy.models import CandleData
 from app.strategy.session_filter import is_in_session
 from app.strategy.signals import evaluate_signal
 from app.strategy.sr_zones import detect_sr_zones
+
+logger = logging.getLogger("forgetrade")
 
 
 class TradingEngine:
@@ -44,6 +48,50 @@ class TradingEngine:
             max_drawdown_pct=self._config.max_drawdown_pct,
         )
         self._running = True
+
+    def stop(self) -> None:
+        """Signal the engine to stop after the current cycle."""
+        self._running = False
+
+    # ── Polling loop ─────────────────────────────────────────────────────
+
+    async def run(
+        self,
+        poll_interval: int = 300,
+        max_cycles: int = 0,
+    ) -> list[dict]:
+        """Run the trading loop until stopped.
+
+        Args:
+            poll_interval: Seconds between cycles.
+            max_cycles: Stop after this many cycles (0 = unlimited).
+
+        Returns:
+            List of per-cycle result dicts.
+        """
+        results: list[dict] = []
+        cycle = 0
+
+        while self._running:
+            cycle += 1
+            try:
+                result = await self.run_once()
+                results.append(result)
+                logger.info("Cycle %d: %s", cycle, result.get("action", "unknown"))
+            except Exception as exc:
+                logger.error("Cycle %d error: %s", cycle, exc)
+                results.append({"action": "error", "reason": str(exc)})
+
+            if max_cycles > 0 and cycle >= max_cycles:
+                break
+
+            # Interruptible sleep — checks _running every second
+            for _ in range(poll_interval):
+                if not self._running:
+                    break
+                await asyncio.sleep(1)
+
+        return results
 
     # ── Single cycle ─────────────────────────────────────────────────────
 
