@@ -6,7 +6,7 @@
     "test_framework": "pytest",
     "test_dir": "tests",
     "dependency_file": "requirements.txt",
-    "venv_path": ".venv"
+    "venv_path": "../.venv"
   },
   "frontend": {
     "enabled": false,

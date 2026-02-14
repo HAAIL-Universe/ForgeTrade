@@ -145,3 +145,115 @@ Outcome: SIGNED-OFF (awaiting AUTHORIZED)
 W1: WARN — Potential secrets found: sk-, AKIA, -----BEGIN, password=, secret=, token=
 W2: PASS — audit_ledger.md exists and is non-empty.
 W3: WARN — No router/handler directory found.
+
+---
+## Audit Entry: Phase 1 — Iteration 3
+Timestamp: 2026-02-14T12:17:33Z
+AEM Cycle: Phase 1
+Outcome: FAIL
+
+### Checklist
+- A1 Scope compliance:      PASS — git diff matches claimed files exactly (11 files).
+- A2 Minimal-diff:          PASS — No renames; diff is minimal.
+- A3 Evidence completeness: PASS — test_runs_latest.md=PASS, updatedifflog.md present.
+- A4 Boundary compliance:   PASS — No forbidden patterns found in any boundary layer.
+- A5 Diff Log Gate:         PASS — No TODO: placeholders in updatedifflog.md.
+- A6 Authorization Gate:    PASS — No prior AUTHORIZED entry; first AEM cycle.
+- A7 Verification order:    PASS — Verification keywords appear in correct order (Static > Runtime > Behavior > Contract).
+- A8 Test gate:             PASS — test_runs_latest.md reports PASS.
+- A9 Dependency gate:       FAIL — app/broker/models.py imports '__future__' (looked for '__future__' in requirements.txt); app/broker/oanda_client.py imports '__future__' (looked for '__future__' in requirements.txt)
+
+### Fix Plan (FAIL items)
+- A9: FAIL — app/broker/models.py imports '__future__' (looked for '__future__' in requirements.txt); app/broker/oanda_client.py imports '__future__' (looked for '__future__' in requirements.txt)
+
+### Files Changed
+- app/broker/models.py
+- app/broker/oanda_client.py
+- app/config.py
+- evidence/test_runs_latest.md
+- evidence/test_runs.md
+- evidence/updatedifflog.md
+- forge.json
+- pytest.ini
+- requirements.txt
+- tests/test_broker.py
+- tests/test_config.py
+
+### Notes
+W1: WARN — Potential secrets found: token=
+W2: PASS — audit_ledger.md exists and is non-empty.
+W3: WARN — No router/handler directory found.
+
+---
+## Audit Entry: Phase 1 — Iteration 4
+Timestamp: 2026-02-14T12:18:09Z
+AEM Cycle: Phase 1
+Outcome: FAIL
+
+### Checklist
+- A1 Scope compliance:      FAIL — Unclaimed in diff: evidence/audit_ledger.md. 
+- A2 Minimal-diff:          PASS — No renames; diff is minimal.
+- A3 Evidence completeness: PASS — test_runs_latest.md=PASS, updatedifflog.md present.
+- A4 Boundary compliance:   PASS — No forbidden patterns found in any boundary layer.
+- A5 Diff Log Gate:         PASS — No TODO: placeholders in updatedifflog.md.
+- A6 Authorization Gate:    PASS — No prior AUTHORIZED entry; first AEM cycle.
+- A7 Verification order:    PASS — Verification keywords appear in correct order (Static > Runtime > Behavior > Contract).
+- A8 Test gate:             PASS — test_runs_latest.md reports PASS.
+- A9 Dependency gate:       PASS — All imports in changed files have declared dependencies.
+
+### Fix Plan (FAIL items)
+- A1: FAIL — Unclaimed in diff: evidence/audit_ledger.md. 
+
+### Files Changed
+- app/broker/models.py
+- app/broker/oanda_client.py
+- app/config.py
+- evidence/test_runs_latest.md
+- evidence/test_runs.md
+- evidence/updatedifflog.md
+- forge.json
+- pytest.ini
+- requirements.txt
+- tests/test_broker.py
+- tests/test_config.py
+
+### Notes
+W1: WARN — Potential secrets found: sk-, AKIA, -----BEGIN, password=, secret=, token=
+W2: PASS — audit_ledger.md exists and is non-empty.
+W3: WARN — No router/handler directory found.
+
+---
+## Audit Entry: Phase 1 — Iteration 5
+Timestamp: 2026-02-14T12:18:16Z
+AEM Cycle: Phase 1
+Outcome: SIGNED-OFF (awaiting AUTHORIZED)
+
+### Checklist
+- A1 Scope compliance:      PASS — git diff matches claimed files exactly (12 files).
+- A2 Minimal-diff:          PASS — No renames; diff is minimal.
+- A3 Evidence completeness: PASS — test_runs_latest.md=PASS, updatedifflog.md present.
+- A4 Boundary compliance:   PASS — No forbidden patterns found in any boundary layer.
+- A5 Diff Log Gate:         PASS — No TODO: placeholders in updatedifflog.md.
+- A6 Authorization Gate:    PASS — No prior AUTHORIZED entry; first AEM cycle.
+- A7 Verification order:    PASS — Verification keywords appear in correct order (Static > Runtime > Behavior > Contract).
+- A8 Test gate:             PASS — test_runs_latest.md reports PASS.
+- A9 Dependency gate:       PASS — All imports in changed files have declared dependencies.
+
+### Files Changed
+- app/broker/models.py
+- app/broker/oanda_client.py
+- app/config.py
+- evidence/audit_ledger.md
+- evidence/test_runs_latest.md
+- evidence/test_runs.md
+- evidence/updatedifflog.md
+- forge.json
+- pytest.ini
+- requirements.txt
+- tests/test_broker.py
+- tests/test_config.py
+
+### Notes
+W1: WARN — Potential secrets found: sk-, AKIA, -----BEGIN, password=, secret=, token=
+W2: PASS — audit_ledger.md exists and is non-empty.
+W3: WARN — No router/handler directory found.
