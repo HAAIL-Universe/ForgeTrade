@@ -364,3 +364,36 @@ Outcome: SIGNED-OFF (awaiting AUTHORIZED)
 W1: WARN — Potential secrets found: sk-, AKIA, -----BEGIN, password=, secret=, token=
 W2: PASS — audit_ledger.md exists and is non-empty.
 W3: WARN — No router/handler directory found.
+
+---
+## Audit Entry: Phase 3 — Iteration 9
+Timestamp: 2026-02-14T12:28:32Z
+AEM Cycle: Phase 3
+Outcome: SIGNED-OFF (awaiting AUTHORIZED)
+
+### Checklist
+- A1 Scope compliance:      PASS — git diff matches claimed files exactly (9 files).
+- A2 Minimal-diff:          PASS — No renames; diff is minimal.
+- A3 Evidence completeness: PASS — test_runs_latest.md=PASS, updatedifflog.md present.
+- A4 Boundary compliance:   PASS — No forbidden patterns found in any boundary layer.
+- A5 Diff Log Gate:         PASS — No TODO: placeholders in updatedifflog.md.
+- A6 Authorization Gate:    PASS — No prior AUTHORIZED entry; first AEM cycle.
+- A7 Verification order:    PASS — Verification keywords appear in correct order (Static > Runtime > Behavior > Contract).
+- A8 Test gate:             PASS — test_runs_latest.md reports PASS.
+- A9 Dependency gate:       PASS — All imports in changed files have declared dependencies.
+
+### Files Changed
+- app/engine.py
+- app/risk/drawdown.py
+- app/risk/position_sizer.py
+- app/risk/sl_tp.py
+- evidence/test_runs_latest.md
+- evidence/test_runs.md
+- evidence/updatedifflog.md
+- tests/test_engine.py
+- tests/test_risk.py
+
+### Notes
+W1: WARN — Potential secrets found: sk-, token=
+W2: PASS — audit_ledger.md exists and is non-empty.
+W3: WARN — No router/handler directory found.

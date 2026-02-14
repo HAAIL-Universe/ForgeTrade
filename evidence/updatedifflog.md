@@ -1,9 +1,9 @@
 # Diff Log (overwrite each cycle)
 
 ## Cycle Metadata
-- Timestamp: 2026-02-14T12:20:00Z
+- Timestamp: 2026-02-14T13:00:00Z
 - Branch: master
-- HEAD: Phase 2 pending commit
+- HEAD: Phase 3 pending commit
 - Diff basis: staged
 
 ## Cycle Status
@@ -12,33 +12,33 @@
 ## Verification
 - Static: PASS — `python -m compileall app/` clean
 - Runtime: PASS — App boots, /health returns 200
-- Behavior: PASS — pytest 21 passed (1 health + 5 config + 5 broker + 10 strategy)
-- Contract: PASS — No boundary violations in app/strategy/ (no I/O imports)
+- Behavior: PASS — pytest 41 passed (1 health + 5 config + 5 broker + 10 strategy + 16 risk + 4 engine)
+- Contract: PASS — No boundary violations in app/risk/ (no HTTP, no DB imports)
 
 ## Summary
-- Phase 2: Strategy Engine implementation
-- Created app/strategy/models.py — CandleData, SRZone, EntrySignal dataclasses
-- Created app/strategy/sr_zones.py — swing high/low detection, zone clustering, detect_sr_zones()
-- Created app/strategy/signals.py — zone touch detection, rejection wick evaluation, evaluate_signal()
-- Created app/strategy/session_filter.py — is_in_session() pure function
-- Created app/strategy/indicators.py — calculate_atr() pure function
-- Created tests/test_strategy.py — 10 deterministic tests covering S/R detection, buy/sell signals, no-signal cases, session filter, ATR, determinism
+- Phase 3: Risk Manager and Order Execution
+- Created app/risk/position_sizer.py — calculate_units() from equity, risk pct, SL distance, pip value
+- Created app/risk/sl_tp.py — calculate_sl() places SL at 1.5x ATR beyond zone, calculate_tp() picks nearer of next zone or 1:2 RR
+- Created app/risk/drawdown.py — DrawdownTracker class with peak tracking and circuit breaker at configurable threshold
+- Created app/engine.py — TradingEngine class connecting strategy, risk, and broker in a single run_once() cycle
+- Created tests/test_risk.py — 16 tests covering position sizing, SL/TP math, drawdown tracking, circuit breaker
+- Created tests/test_engine.py — 4 integration tests: end-to-end order placement, session filter skip, no-signal skip, circuit breaker halt
 
 ## Files Changed (staged)
-- app/strategy/models.py
-- app/strategy/sr_zones.py
-- app/strategy/signals.py
-- app/strategy/session_filter.py
-- app/strategy/indicators.py
-- tests/test_strategy.py
+- app/risk/position_sizer.py
+- app/risk/sl_tp.py
+- app/risk/drawdown.py
+- app/engine.py
+- tests/test_risk.py
+- tests/test_engine.py
 - evidence/test_runs.md
 - evidence/test_runs_latest.md
 - evidence/updatedifflog.md
-- evidence/audit_ledger.md
 
 ## Notes (optional)
-- All strategy functions are pure — no I/O, no environment, no broker calls
-- Determinism verified by test: same input produces identical output
+- Risk functions are pure math — no I/O, no broker, no DB per boundaries.json
+- Engine accepts utc_now parameter for deterministic testing without datetime mocks
+- MockBroker duck-types OandaClient for engine tests
 
 ## Next Steps
-- Begin Phase 3 — Risk Manager + Order Execution
+- Begin Phase 4 — Trade Logging and CLI Dashboard
