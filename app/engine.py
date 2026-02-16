@@ -260,6 +260,9 @@ class TradingEngine:
         if hasattr(self._strategy, "last_insight") and isinstance(self._strategy.last_insight, dict):
             insight = self._strategy.last_insight.copy()
             insight["evaluated_at"] = utc_now.isoformat()
+            # Override pair with the engine's instrument (strategy may read
+            # the global config.trade_pair which is always EUR_USD)
+            insight["pair"] = self.instrument
             # Add engine-level checks
             insight.setdefault("checks", {})
             insight["checks"]["in_session"] = True  # We got past check 2

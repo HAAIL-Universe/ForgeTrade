@@ -60,7 +60,7 @@ class TrendScalpStrategy:
             "checks": checks,
         }
 
-        # 1 ── H1 trend detection
+        # 1 ── H1 trend detection (primary)
         h1_raw = await broker.fetch_candles(instrument, "H1", count=50)
         h1_candles = [
             CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
@@ -73,6 +73,33 @@ class TrendScalpStrategy:
             "ema_slow": round(trend.ema_slow_value, 2),
             "slope": round(trend.slope, 4),
         }
+
+        # 1b ── Multi-timeframe trend snapshot for dashboard cycling
+        multi_tf_trends = {}
+        for tf_gran, tf_label in [("S5", "S5"), ("M1", "M1"), ("M5", "M5"),
+                                   ("M15", "M15"), ("M30", "M30"), ("H1", "H1")]:
+            try:
+                if tf_gran == "H1":
+                    # Re-use already fetched H1 trend
+                    multi_tf_trends[tf_label] = {
+                        "direction": trend.direction,
+                        "slope": round(trend.slope, 4),
+                    }
+                else:
+                    tf_raw = await broker.fetch_candles(instrument, tf_gran, count=50)
+                    tf_candles = [
+                        CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
+                        for c in tf_raw
+                    ]
+                    tf_trend = detect_trend(tf_candles)
+                    multi_tf_trends[tf_label] = {
+                        "direction": tf_trend.direction,
+                        "slope": round(tf_trend.slope, 4),
+                    }
+            except Exception:
+                multi_tf_trends[tf_label] = {"direction": "unknown", "slope": 0}
+        self.last_insight["multi_tf_trends"] = multi_tf_trends
+
         if trend.direction == "flat":
             self.last_insight["result"] = "no_trend"
             return None
