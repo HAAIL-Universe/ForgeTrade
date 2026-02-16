@@ -45,6 +45,21 @@
       "session_start_utc": 7,
       "session_end_utc": 21,
       "enabled": true
+    },
+    {
+      "name": "mr-range",
+      "instrument": "EUR_USD",
+      "strategy": "mean_reversion",
+      "timeframes": [
+        "H1",
+        "M15"
+      ],
+      "poll_interval_seconds": 120,
+      "risk_per_trade_pct": 0.75,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 7,
+      "session_end_utc": 20,
+      "enabled": false
     }
   ],
   "max_drawdown_pct": 10.0,

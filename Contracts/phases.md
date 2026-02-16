@@ -985,4 +985,421 @@ The builder should execute these steps in order:
 
 ---
 
+## Phase 12 — Mean Reversion Strategy for EUR/USD
+
+### A) Purpose and Problem Statement
+
+Forex major pairs (EUR/USD, GBP/USD, USD/JPY) spend approximately **70% of their time in ranges** — oscillating between support and resistance. The current `sr_rejection` strategy already detects S/R zones and rejection wicks, but it is a swing strategy on D+H4 timeframes that trades infrequently (a few signals per week at most).
+
+A **mean reversion strategy** exploits the ranging nature of forex by:
+- Detecting when the market is ranging (not trending)
+- Buying at the bottom of the range when oversold
+- Selling at the top of the range when overbought
+- Exiting at the midpoint or opposite boundary
+
+This is the **highest win-rate systematic approach** in forex, typically achieving **68-75% accuracy** when filtered with ADX to avoid trending markets. The edge comes from a statistical truth: most S/R breakout attempts fail. Prices bounce off boundaries far more often than they break through them.
+
+#### Why This Beats Trend-Following on Accuracy
+
+| Aspect | Trend Following | Mean Reversion |
+|--------|----------------|----------------|
+| Win rate | 38-45% | 68-75% |
+| R:R per trade | 2:1 to 3:1 | 1:1 to 1:1.2 |
+| Holding time | Hours to days | 1-8 hours |
+| Works when | Market is trending | Market is ranging (70% of the time) |
+| Fails when | Market is choppy | Range breaks out into trend |
+| Drawdown pattern | Many small losses, few big wins | Steady small wins, occasional larger loss |
+
+The mean reversion strategy complements the existing scalp and swing strategies — it trades a different market condition (range vs trend vs momentum).
+
+### B) Current Constraints / Starting State
+
+- `sr_zones.py` exists — detects support/resistance zones from swing highs/lows. Can be reused.
+- `indicators.py` has ATR(14) and EMA(n). **No RSI or ADX yet**.
+- `StrategyProtocol` is established — new strategy must implement `evaluate(broker, config) -> Optional[StrategyResult]`.
+- `StreamConfig` supports arbitrary strategy names, timeframes, risk, session filters.
+- Strategy registry (`registry.py`) handles instantiation from config.
+- The `sr-swing` stream currently uses `sr_rejection` on EUR/USD D+H4. The new strategy would be a **separate stream** that can coexist.
+- Dashboard insight panel already supports multiple streams with tabs.
+
+### C) Scope
+
+#### Constraints
+- The mean reversion strategy is a **new class** implementing `StrategyProtocol`.
+- It does NOT modify any existing strategy code (SR-rejection, momentum scalp).
+- New indicators (RSI, ADX) go in `app/strategy/indicators.py` as pure functions.
+- The strategy operates on **H1 timeframe** for zone detection and **M15** for entry timing — fast enough for intraday mean reversion but not so fast that it becomes scalping.
+- No new dependencies — pure Python, no external libraries needed.
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **RSI indicator** | `app/strategy/indicators.py` | `calculate_rsi(candles, period=14) -> list[float]`. Standard Wilder's RSI. Returns full series. |
+| 2 | **ADX indicator** | `app/strategy/indicators.py` | `calculate_adx(candles, period=14) -> list[float]`. Standard ADX from +DI, -DI, DX smoothing. Returns full series. |
+| 3 | **Bollinger Bands** | `app/strategy/indicators.py` | `calculate_bollinger(candles, period=20, std_dev=2.0) -> tuple[list[float], list[float], list[float]]`. Returns (upper, middle, lower) band series. |
+| 4 | **Range detection** | `app/strategy/mean_reversion.py` | `is_ranging(adx_values, threshold=25.0) -> bool`. Returns True when latest ADX < threshold. This is the critical filter — only trade when the market is NOT trending. |
+| 5 | **Mean reversion signal evaluator** | `app/strategy/mr_signals.py` | `evaluate_mr_entry(candles_m15, rsi_values, bb_upper, bb_lower, bb_mid, zones, trend_state) -> Optional[MREntrySignal]`. Core logic: buy when price at lower BB/support + RSI < 30; sell when price at upper BB/resistance + RSI > 70. |
+| 6 | **Mean reversion strategy class** | `app/strategy/mean_reversion.py` | `MeanReversionStrategy(StrategyProtocol)`. Orchestrates the full pipeline. |
+| 7 | **SL/TP for mean reversion** | `app/risk/mr_sl_tp.py` | SL just beyond range boundary. TP at midpoint (conservative) or opposite boundary (aggressive). |
+| 8 | **Register strategy** | `app/strategy/registry.py` | Add `"mean_reversion": MeanReversionStrategy` to registry. |
+| 9 | **Add stream to forge.json** | `forge.json` | New `"mr-range"` stream for EUR/USD on H1+M15, enabled=false by default. |
+| 10 | **Tests** | `tests/test_mean_reversion.py` | Full test suite for RSI, ADX, Bollinger, range detection, signal evaluation, strategy integration. |
+
+### D) New Indicator Specifications
+
+#### RSI (Relative Strength Index)
+
+```python
+def calculate_rsi(candles: list[CandleData], period: int = 14) -> list[float]:
+```
+
+**Algorithm** (Wilder's smoothed RSI):
+1. Calculate price changes: `delta = close[i] - close[i-1]`
+2. Separate gains (positive deltas) and losses (abs of negative deltas).
+3. First average gain/loss = SMA of first `period` values.
+4. Subsequent: `avg_gain = (prev_avg_gain × (period-1) + current_gain) / period` (Wilder smoothing).
+5. RS = avg_gain / avg_loss
+6. RSI = 100 - (100 / (1 + RS))
+
+**Returns**: Full-length list. Values before seed period are `NaN`. Range: 0-100.
+
+**Key levels**:
+- RSI < 30 = oversold (buy signal in ranging market)
+- RSI > 70 = overbought (sell signal in ranging market)
+- RSI 40-60 = neutral (no signal)
+
+#### ADX (Average Directional Index)
+
+```python
+def calculate_adx(candles: list[CandleData], period: int = 14) -> list[float]:
+```
+
+**Algorithm**:
+1. Calculate +DM (Directional Movement) and -DM for each candle:
+   - `+DM = high[i] - high[i-1]` if positive and > `-(low[i] - low[i-1])`, else 0
+   - `-DM = low[i-1] - low[i]` if positive and > `+(high[i] - high[i-1])`, else 0
+2. Smooth +DM, -DM, and TR using Wilder smoothing (same as RSI).
+3. `+DI = 100 × smoothed_+DM / smoothed_TR`
+4. `-DI = 100 × smoothed_-DM / smoothed_TR`
+5. `DX = 100 × |+DI - -DI| / (+DI + -DI)`
+6. ADX = Wilder-smoothed DX over `period`.
+
+**Returns**: Full-length list. Needs `2 × period + 1` candles minimum. Values before seed are `NaN`.
+
+**Key levels**:
+- ADX < 20 = strong range (ideal for mean reversion)
+- ADX 20-25 = weak range / transition (acceptable)
+- ADX > 25 = trending (DO NOT trade mean reversion)
+- ADX > 40 = strong trend (definitely do not trade)
+
+#### Bollinger Bands
+
+```python
+def calculate_bollinger(
+    candles: list[CandleData],
+    period: int = 20,
+    std_dev: float = 2.0,
+) -> tuple[list[float], list[float], list[float]]:
+```
+
+**Algorithm**:
+1. Middle band = SMA(close, period)
+2. Standard deviation = σ of last `period` closes
+3. Upper band = middle + (std_dev × σ)
+4. Lower band = middle - (std_dev × σ)
+
+**Returns**: Tuple of (upper, middle, lower) band series. Each is full-length with `NaN` before seed.
+
+**Usage in mean reversion**:
+- Price touching lower band + RSI < 30 → oversold at range bottom
+- Price touching upper band + RSI > 70 → overbought at range top
+- Price near middle band → no signal (wait for extremes)
+
+### E) Mean Reversion Strategy Flow
+
+```
+MeanReversionStrategy.evaluate(broker, config):
+│
+├── 1. Fetch 50× H1 candles
+│   └── calculate_adx(h1, 14) → ADX series
+│   └── if ADX[-1] > 25 → return None (market is trending, not ranging)
+│   └── detect_sr_zones(h1) → zone list (reuse existing S/R detection)
+│
+├── 2. Fetch 30× M15 candles
+│   └── calculate_rsi(m15, 14) → RSI series
+│   └── calculate_bollinger(m15, 20, 2.0) → (upper, middle, lower)
+│
+├── 3. Evaluate mean reversion entry
+│   └── BUY conditions (ALL must be true):
+│       a. ADX < 25 (ranging)
+│       b. Price at or below lower Bollinger Band
+│       c. RSI(14) < 30 (oversold)
+│       d. Price within 15 pips of a support zone (S/R confirmation)
+│   └── SELL conditions (ALL must be true):
+│       a. ADX < 25 (ranging)
+│       b. Price at or above upper Bollinger Band
+│       c. RSI(14) > 70 (overbought)
+│       d. Price within 15 pips of a resistance zone (S/R confirmation)
+│   └── if neither → return None
+│
+├── 4. Calculate SL
+│   └── BUY: SL = max(zone_price - 1.5×ATR, lower_bb - 1.5×ATR)
+│   └── SELL: SL = min(zone_price + 1.5×ATR, upper_bb + 1.5×ATR)
+│   └── Just beyond range boundary — if it breaks, range is invalid
+│
+├── 5. Calculate TP
+│   └── Conservative: Bollinger middle band (midpoint of range)
+│   └── Aggressive: opposite Bollinger band (full range traverse)
+│   └── Default: use middle band (higher win rate)
+│
+├── 6. ADX kill-switch flag
+│   └── Store current ADX in result metadata
+│   └── Engine can close early if ADX spikes above 30 while in trade
+│       (stretch goal — defer if too complex)
+│
+└── return StrategyResult(signal, sl, tp, atr)
+```
+
+#### API Call Summary
+
+| Step | Fetch | Count | Purpose |
+|------|-------|-------|---------|
+| 1 | H1 candles | 50 | ADX(14) + S/R zone detection |
+| 2 | M15 candles | 30 | RSI(14) + Bollinger Bands(20, 2.0) |
+| **Total** | **2 requests per cycle** | | Very light — no multi-TF cascading |
+
+### F) Entry Signal Detail
+
+#### Buy Entry (Oversold at Range Bottom)
+
+```
+Required (ALL):
+  ├── ADX(14) on H1 < 25                 → market is ranging
+  ├── Price ≤ Bollinger Lower Band (M15)  → at range bottom
+  ├── RSI(14) on M15 < 30                → oversold confirmation
+  └── Price within 15 pips of support     → S/R zone agreement
+
+Optional bonus (logged but not required):
+  ├── RSI divergence (price lower low, RSI higher low) → extra confidence
+  └── Bullish candle pattern on M15       → immediate bounce signal
+```
+
+#### Sell Entry (Overbought at Range Top)
+
+```
+Required (ALL):
+  ├── ADX(14) on H1 < 25                 → market is ranging
+  ├── Price ≥ Bollinger Upper Band (M15)  → at range top
+  ├── RSI(14) on M15 > 70                → overbought confirmation
+  └── Price within 15 pips of resistance  → S/R zone agreement
+
+Optional bonus (logged but not required):
+  ├── RSI divergence (price higher high, RSI lower high) → extra confidence
+  └── Bearish candle pattern on M15       → immediate rejection signal
+```
+
+#### Why Four Gates?
+
+Each gate independently filters noise. Together they produce high accuracy:
+
+| Gate | Purpose | False signals filtered |
+|------|---------|----------------------|
+| ADX < 25 | Only trade when ranging | Eliminates all trend trades (≈30% of time) |
+| Bollinger touch | Price at extreme | Eliminates mid-range noise (≈80% of candles) |
+| RSI < 30 / > 70 | Momentum exhaustion | Eliminates moves with momentum behind them |
+| S/R zone proximity | Structural validation | Eliminates extremes at non-significant levels |
+
+Probability of all four aligning on a losing trade is significantly lower than any single indicator.
+
+### G) SL/TP Design for Mean Reversion
+
+| Parameter | Value | Rationale |
+|-----------|-------|-----------|
+| **SL method** | 1.5 × ATR(14) beyond the nearest zone/BB boundary | If price moves this far past the boundary, the range has broken. Get out. |
+| **SL minimum** | 10 pips | Prevents SL inside spread noise on EUR/USD. |
+| **SL maximum** | 50 pips | Caps risk for a mean reversion trade. If SL needs to be wider, the range is too large for this strategy. |
+| **TP method** | Bollinger middle band (default) | Conservative target — price returns to average. Higher hit rate than full-range TP. |
+| **TP alternative** | Opposite Bollinger band | Aggressive — captures full range. Lower hit rate but better R:R. Configurable via `rr_mode` param. |
+| **Expected R:R** | 1:1 to 1:1.2 (middle band TP) | Mean reversion sacrifices R:R for win rate. At 72% accuracy, 1:1 R:R is profitable (EV = +$0.44 per $1 risked). |
+| **Position size** | `risk_per_trade_pct: 0.75` | Larger than scalp (0.5%) because higher confidence, smaller than swing (1.0%) because shorter holding time. |
+| **Max concurrent** | 1 | Mean reversion on one pair — no stacking positions at the same level. |
+
+### H) Dashboard Integration
+
+The strategy populates `self.last_insight` with:
+
+```python
+{
+    "strategy": "Mean Reversion",
+    "pair": "EUR_USD",
+    "checks": {
+        "range_detected": True/False,    # ADX < 25
+        "at_boundary": True/False,       # price at BB edge
+        "rsi_extreme": True/False,       # RSI < 30 or > 70
+        "zone_confirmed": True/False,    # near S/R zone
+        "sl_valid": True/False,
+        "risk_calculated": True/False,
+    },
+    "adx": 18.5,
+    "rsi": 27.3,
+    "bb_upper": 1.0865,
+    "bb_middle": 1.0842,
+    "bb_lower": 1.0819,
+    "nearest_zone": {"price": 1.0821, "type": "support", "distance_pips": 2.3},
+    "result": "signal_found" | "trending" | "not_at_boundary" | "rsi_neutral" | "no_zone",
+}
+```
+
+The existing dashboard insight panel renders this automatically — the `checks` dict drives the readiness checklist, and numeric values appear in the stats section.
+
+### I) forge.json Stream Configuration
+
+```json
+{
+    "name": "mr-range",
+    "instrument": "EUR_USD",
+    "strategy": "mean_reversion",
+    "timeframes": ["H1", "M15"],
+    "poll_interval_seconds": 120,
+    "risk_per_trade_pct": 0.75,
+    "max_concurrent_positions": 1,
+    "session_start_utc": 7,
+    "session_end_utc": 20,
+    "enabled": false
+}
+```
+
+**Notes**:
+- `poll_interval_seconds: 120` — checks every 2 minutes. Mean reversion doesn't need sub-minute polling.
+- `enabled: false` — must be explicitly enabled after forward-testing.
+- Same session window as SR-swing (London+NY). Ranges are most reliable mid-session.
+- Runs on EUR/USD alongside the existing `sr-swing` stream. They won't conflict — `sr-swing` looks for rejection wicks at D/H4 zones (different timeframe, different condition), `mr-range` looks for BB+RSI extremes at H1/M15 zones (only when ADX says ranging).
+
+### J) Interaction with Existing sr-swing Stream
+
+Both `sr-swing` and `mr-range` trade EUR/USD. They could potentially signal at the same time. This is handled by:
+
+1. **Different conditions**: `sr-swing` requires a rejection wick on H4 near a Daily zone. `mr-range` requires ADX < 25, BB touch, RSI extreme on M15 near an H1 zone. Both signaling simultaneously is unlikely but not impossible — and if they agree, that's actually strong confirmation.
+
+2. **Position guard**: `max_concurrent_positions: 1` on each stream. The engine checks open positions per instrument. If `sr-swing` already has an EUR/USD position open, `mr-range` can still open another (they're independent streams with independent position counts). Total max = 2 EUR/USD positions.
+
+3. **Conflicting directions**: If `sr-swing` says buy and `mr-range` says sell, both execute. This is acceptable — they're different strategies with different holding times. The mean reversion trade will close faster (hours vs days).
+
+### K) Non-Goals (Explicitly Out of Scope)
+
+- **No RSI divergence detection** — divergence is a bonus signal, not a gate. Detecting it requires multi-swing analysis that adds complexity. Defer to future phase.
+- **No ADX kill-switch in engine** — closing a trade mid-flight because ADX spiked is the stretch goal. Phase 12 focuses on entry logic. The SL handles adverse moves.
+- **No Bollinger Band squeeze detection** — squeeze (bands narrowing) predicts expansion but not direction. Could be a future enhancement.
+- **No multi-pair mean reversion** — Phase 12 targets EUR/USD only. Could extend to GBP/USD, USD/JPY in a future phase once the strategy is validated.
+- **No pairs/correlation trading** — trading the EUR/USD vs GBP/USD spread is a separate, more complex strategy. Out of scope.
+- **No ML/optimization of indicator periods** — RSI(14), ADX(14), BB(20, 2.0) are standard settings. Tuning is manual and deferred.
+
+### L) Acceptance Criteria
+
+#### Functional
+
+1. `calculate_rsi()` returns correct RSI values matching known test data (verified against manual calculation).
+2. `calculate_rsi()` returns RSI < 30 for oversold synthetic data and RSI > 70 for overbought synthetic data.
+3. `calculate_adx()` returns ADX < 20 for flat/ranging synthetic candles.
+4. `calculate_adx()` returns ADX > 30 for strongly trending synthetic candles.
+5. `calculate_bollinger()` returns bands that widen during volatility and narrow during calm.
+6. `is_ranging()` returns True when ADX < 25, False otherwise.
+7. `evaluate_mr_entry()` returns buy when all four gates pass (ADX ranging + lower BB + RSI < 30 + support zone).
+8. `evaluate_mr_entry()` returns sell when all four gates pass (ADX ranging + upper BB + RSI > 70 + resistance zone).
+9. `evaluate_mr_entry()` returns None when ADX > 25 (trending — even if RSI and BB say go).
+10. `evaluate_mr_entry()` returns None when RSI is between 30-70 (not at extreme).
+11. SL is placed beyond the range boundary. TP at Bollinger midpoint by default.
+12. SL min/max bounds (10-50 pips) are enforced.
+13. Strategy registers as `"mean_reversion"` and is instantiated correctly.
+14. Dashboard insight panel shows ADX, RSI, BB levels, and range check status.
+15. Setting `"enabled": true` on the `mr-range` stream starts the strategy alongside existing streams.
+
+#### Unit Tests
+
+| Test Case | File | Asserts |
+|-----------|------|---------|
+| `test_rsi_oversold` | `tests/test_mean_reversion.py` | RSI < 30 for steadily dropping prices |
+| `test_rsi_overbought` | `tests/test_mean_reversion.py` | RSI > 70 for steadily rising prices |
+| `test_rsi_neutral` | `tests/test_mean_reversion.py` | RSI 40-60 for flat prices |
+| `test_rsi_insufficient_data` | `tests/test_mean_reversion.py` | ValueError when < period+1 candles |
+| `test_adx_ranging` | `tests/test_mean_reversion.py` | ADX < 20 for oscillating prices |
+| `test_adx_trending` | `tests/test_mean_reversion.py` | ADX > 30 for consistently rising prices |
+| `test_adx_insufficient_data` | `tests/test_mean_reversion.py` | ValueError when < 2×period+1 candles |
+| `test_bollinger_bands_width` | `tests/test_mean_reversion.py` | Upper > middle > lower. Width increases with volatility. |
+| `test_is_ranging_true` | `tests/test_mean_reversion.py` | `is_ranging(adx, 25)` True when ADX = 18 |
+| `test_is_ranging_false` | `tests/test_mean_reversion.py` | `is_ranging(adx, 25)` False when ADX = 32 |
+| `test_mr_buy_signal` | `tests/test_mean_reversion.py` | Buy when all four gates pass |
+| `test_mr_sell_signal` | `tests/test_mean_reversion.py` | Sell when all four gates pass |
+| `test_mr_blocked_trending` | `tests/test_mean_reversion.py` | None when ADX > 25 |
+| `test_mr_blocked_rsi_neutral` | `tests/test_mean_reversion.py` | None when RSI is 50 |
+| `test_mr_blocked_no_zone` | `tests/test_mean_reversion.py` | None when no S/R zone nearby |
+| `test_mr_sl_bounds` | `tests/test_mean_reversion.py` | SL None when < 10 pips or > 50 pips |
+| `test_mr_tp_midpoint` | `tests/test_mean_reversion.py` | TP = Bollinger middle band |
+| `test_strategy_registry` | `tests/test_mean_reversion.py` | `get_strategy("mean_reversion")` returns instance |
+| `test_strategy_protocol` | `tests/test_mean_reversion.py` | `isinstance(strat, StrategyProtocol)` |
+
+### M) Verification Gates
+
+| Gate | Check |
+|------|-------|
+| **Static** | `python -m compileall app/` passes. No import errors. |
+| **Runtime** | App boots with `mr-range` stream enabled. Cycles run without errors. |
+| **Behavior** | All mean reversion tests pass. Existing tests unaffected (150+ passing). |
+| **Contract** | `MeanReversionStrategy` satisfies `StrategyProtocol`. Dashboard shows stream. |
+| **Regression** | SR-rejection and momentum scalp strategies unchanged and passing. |
+
+### N) Affected Files — Change Map
+
+| File | Change Type | What Changes |
+|------|-------------|-------------|
+| `app/strategy/indicators.py` | **Add functions** | New `calculate_rsi()`, `calculate_adx()`, `calculate_bollinger()`. Existing ATR/EMA untouched. |
+| `app/strategy/mean_reversion.py` | **New file** | `MeanReversionStrategy` class + `is_ranging()` helper. |
+| `app/strategy/mr_signals.py` | **New file** | `MREntrySignal` dataclass + `evaluate_mr_entry()` function. |
+| `app/risk/mr_sl_tp.py` | **New file** | `calculate_mr_sl()`, `calculate_mr_tp()`. |
+| `app/strategy/registry.py` | **Add entry** | Register `"mean_reversion"`. |
+| `forge.json` | **Add stream** | New `"mr-range"` stream (disabled by default). |
+| `tests/test_mean_reversion.py` | **New file** | Full test suite (19 tests). |
+
+### O) Build Steps (For Builder Reference)
+
+1. **Add RSI to `indicators.py`** — pure function, fully testable in isolation. Write test immediately.
+2. **Add ADX to `indicators.py`** — depends on nothing. Write test immediately.
+3. **Add Bollinger Bands to `indicators.py`** — uses SMA. Write test immediately.
+4. **Run indicator tests** — all three indicators pass before touching strategy code.
+5. **Create `mr_signals.py`** — `MREntrySignal` dataclass + `evaluate_mr_entry()`. Write signal tests.
+6. **Create `mr_sl_tp.py`** — SL/TP calculation for mean reversion. Write SL/TP tests.
+7. **Create `mean_reversion.py`** — strategy class orchestrating the pipeline. Write integration test.
+8. **Register strategy** — add to `registry.py`. Write registry test.
+9. **Add `mr-range` stream to `forge.json`** — disabled by default.
+10. **Run full test suite** — 150+ existing + 19 new all passing.
+11. **Boot and smoke test** — enable `mr-range`, start bot, verify dashboard shows three streams.
+12. **Commit**.
+
+### P) Operational Notes (Post-Deploy)
+
+#### Tuning Guidance
+
+| Parameter | Default | If too few trades | If too many bad trades |
+|-----------|---------|-------------------|----------------------|
+| ADX threshold | 25 | Raise to 30 (allows weaker ranges) | Lower to 20 (stricter ranging) |
+| RSI oversold | 30 | Raise to 35 | Lower to 25 |
+| RSI overbought | 70 | Lower to 65 | Raise to 75 |
+| BB std_dev | 2.0 | Lower to 1.5 (tighter bands = more touches) | Raise to 2.5 (only extreme touches) |
+| Zone proximity | 15 pips | Widen to 25 pips | Tighten to 10 pips |
+| TP target | Middle band | Switch to opposite band (more profit per trade) | Keep middle (higher win rate) |
+
+#### Expected Performance
+
+| Metric | Projected |
+|--------|----------|
+| Win rate | 68-75% |
+| R:R | 1:1 to 1:1.2 |
+| Trades per week | 3-8 (EUR/USD ranges regularly but not constantly) |
+| Avg holding time | 2-8 hours |
+| Max drawdown per trade | 50 pips ($50 at 0.75% risk on $10k = ~$75 risk) |
+| Expected monthly return | +2-4% on capital (at 72% WR, 1:1 RR, 5 trades/week) |
+
+---
+
 *This plan was generated by the Forge Director. Each phase should be built, tested, and authorized sequentially before proceeding to the next.*
