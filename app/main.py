@@ -5,13 +5,22 @@ paper, live, and backtest modes.
 """
 
 import logging
+import os
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import router
 
 app = FastAPI(title="ForgeTrade Internal API", version="0.1.0")
 app.include_router(router)
+
+# ── Static files (dashboard) ────────────────────────────────────────────
+
+_static_dir = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/dashboard", StaticFiles(directory=_static_dir), name="dashboard")
 
 logger = logging.getLogger("forgetrade")
 
@@ -20,6 +29,12 @@ logger = logging.getLogger("forgetrade")
 async def health():
     """Health check required by Forge verification gates."""
     return {"status": "ok"}
+
+
+@app.get("/")
+async def root_redirect():
+    """Redirect root to the dashboard."""
+    return RedirectResponse(url="/dashboard/index.html", status_code=307)
 
 
 def warn_if_live(mode: str) -> bool:
@@ -73,6 +88,13 @@ def _run_cli() -> None:
 
     broker = OandaClient(config)
     engine = TradingEngine(config=config, broker=broker)
+
+    # Inject broker into routers for /positions endpoint
+    from app.api.routers import configure_routers
+    from app.repos.trade_repo import TradeRepo
+
+    trade_repo = TradeRepo(config.db_path)
+    configure_routers(trade_repo=trade_repo, broker=broker)
 
     import signal
 

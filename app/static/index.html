@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ForgeTrade Dashboard</title>
+<style>
+  /* ── Reset & Base ───────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0d1117;
+    color: #c9d1d9;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    line-height: 1.5;
+    padding: 16px;
+  }
+
+  /* ── Fonts ──────────────────────────────────────────────── */
+  .mono { font-family: "JetBrains Mono", "Fira Code", "Cascadia Code", "Consolas", monospace; }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    margin-bottom: 16px;
+  }
+  .header h1 { font-size: 18px; font-weight: 700; letter-spacing: 1px; }
+  .header-right { display: flex; align-items: center; gap: 12px; }
+  .mode-badge {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .mode-paper { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
+  .mode-live { background: #f8514933; color: #f85149; border: 1px solid #f85149; animation: pulse-red 2s ease-in-out infinite; }
+  .mode-backtest { background: #8b5cf633; color: #a78bfa; border: 1px solid #8b5cf6; }
+  .mode-idle { background: #30363d; color: #8b949e; border: 1px solid #484f58; }
+  @keyframes pulse-red { 0%, 100% { box-shadow: 0 0 4px #f8514966; } 50% { box-shadow: 0 0 12px #f85149aa; } }
+  .uptime { color: #8b949e; font-size: 13px; }
+
+  /* ── Cards ──────────────────────────────────────────────── */
+  .card {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+  .card-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8b949e;
+    margin-bottom: 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .card-title .count { color: #58a6ff; }
+
+  /* ── Metrics Bar ────────────────────────────────────────── */
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .metric {
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+  }
+  .metric-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: #8b949e; margin-bottom: 4px; }
+  .metric-value { font-size: 22px; font-weight: 700; }
+  .metric-sub { font-size: 12px; margin-top: 2px; }
+  .positive { color: #3fb950; }
+  .negative { color: #f85149; }
+  .neutral { color: #c9d1d9; }
+
+  /* ── Drawdown Bar ───────────────────────────────────────── */
+  .dd-bar-container {
+    width: 100%;
+    height: 8px;
+    background: #21262d;
+    border-radius: 4px;
+    overflow: hidden;
+    margin-top: 6px;
+  }
+  .dd-bar {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.5s ease;
+  }
+  .dd-yellow { background: #d29922; }
+  .dd-orange { background: #db6d28; }
+  .dd-red { background: #f85149; }
+
+  /* ── Circuit Breaker ────────────────────────────────────── */
+  .cb-off { color: #3fb950; }
+  .cb-active { color: #f85149; animation: pulse-red 2s ease-in-out infinite; }
+
+  /* ── Tables ─────────────────────────────────────────────── */
+  table { width: 100%; border-collapse: collapse; }
+  th {
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: #8b949e;
+    padding: 8px 12px;
+    border-bottom: 1px solid #30363d;
+    font-weight: 600;
+  }
+  td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #21262d;
+    font-size: 13px;
+  }
+  tr:hover { background: #1c2128; }
+  .empty-row td { text-align: center; color: #484f58; font-style: italic; padding: 24px; }
+
+  /* ── Status Dots ────────────────────────────────────────── */
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+  .dot-active { background: #3fb950; }
+  .dot-off { background: #484f58; }
+  .dot-error { background: #f85149; }
+
+  /* ── Footer ─────────────────────────────────────────────── */
+  .footer {
+    text-align: center;
+    color: #484f58;
+    font-size: 12px;
+    padding: 8px;
+    margin-top: 8px;
+  }
+
+  /* ── Responsive ─────────────────────────────────────────── */
+  @media (max-width: 768px) {
+    .metrics { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────── -->
+<div class="header">
+  <h1>FORGETRADE</h1>
+  <div class="header-right">
+    <span id="mode-badge" class="mode-badge mode-idle">IDLE</span>
+    <span class="uptime mono" id="uptime">▲ 0h0m</span>
+  </div>
+</div>
+
+<!-- ── Account Metrics ────────────────────────────────────── -->
+<div class="metrics">
+  <div class="metric">
+    <div class="metric-label">Equity</div>
+    <div class="metric-value mono" id="equity">—</div>
+    <div class="metric-sub mono" id="equity-delta"></div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Balance</div>
+    <div class="metric-value mono" id="balance">—</div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Drawdown</div>
+    <div class="metric-value mono" id="drawdown">—</div>
+    <div class="dd-bar-container"><div class="dd-bar" id="dd-bar"></div></div>
+  </div>
+  <div class="metric">
+    <div class="metric-label">Circuit Breaker</div>
+    <div class="metric-value" id="circuit-breaker">—</div>
+  </div>
+</div>
+
+<!-- ── Open Positions ─────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">
+    <span>Open Positions</span>
+    <span class="count mono" id="pos-count">0 open</span>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>SL</th><th>TP</th><th>uP&L</th></tr>
+    </thead>
+    <tbody id="positions-body">
+      <tr class="empty-row"><td colspan="7">No open positions</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Watchlist ───────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title"><span>Watchlist</span></div>
+  <table>
+    <thead>
+      <tr><th>Pair</th><th>Dir</th><th>Zone</th><th>Reason</th><th>Status</th></tr>
+    </thead>
+    <tbody id="watchlist-body">
+      <tr class="empty-row"><td colspan="5">No pending signals</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Closed Trades ──────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">
+    <span>Closed Trades</span>
+    <span class="count mono" id="closed-total-pnl"></span>
+  </div>
+  <table>
+    <thead>
+      <tr><th>Pair</th><th>Dir</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Status</th><th>Closed</th></tr>
+    </thead>
+    <tbody id="closed-body">
+      <tr class="empty-row"><td colspan="7">No closed trades</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Streams ─────────────────────────────────────────────── -->
+<div class="card">
+  <div class="card-title"><span>Streams</span></div>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Pair</th><th>Cycle</th><th>Status</th><th>Last Signal</th></tr>
+    </thead>
+    <tbody id="streams-body">
+      <tr class="empty-row"><td colspan="5">No stream data</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- ── Footer ─────────────────────────────────────────────── -->
+<div class="footer">
+  Last refresh: <span class="mono" id="last-refresh">—</span> &nbsp;|&nbsp; Polling: every 5s
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  const POLL_MS = 5000;
+
+  // ── Helpers ──────────────────────────────────────────────
+
+  function $(id) { return document.getElementById(id); }
+
+  function fmt$(v) {
+    if (v == null) return '—';
+    var n = parseFloat(v);
+    return isNaN(n) ? '—' : '$' + n.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+  }
+
+  function fmtPct(v) {
+    if (v == null) return '—';
+    return parseFloat(v).toFixed(2) + '%';
+  }
+
+  function fmtPrice(v, digits) {
+    if (v == null) return '—';
+    return parseFloat(v).toFixed(digits || 5);
+  }
+
+  function fmtTime(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    return d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC'}) + ' UTC';
+  }
+
+  function pnlClass(v) {
+    if (v == null) return 'neutral';
+    return parseFloat(v) >= 0 ? 'positive' : 'negative';
+  }
+
+  function formatUptime(secs) {
+    if (!secs || secs <= 0) return '▲ 0h0m';
+    var h = Math.floor(secs / 3600);
+    var m = Math.floor((secs % 3600) / 60);
+    return '▲ ' + h + 'h' + m + 'm';
+  }
+
+  // ── Fetch with error handling ────────────────────────────
+
+  function fetchJSON(url) {
+    return fetch(url).then(function(r) {
+      if (!r.ok) throw new Error(r.status);
+      return r.json();
+    });
+  }
+
+  // ── Update Functions ─────────────────────────────────────
+
+  function updateStatus(data) {
+    // Mode badge
+    var badge = $('mode-badge');
+    var mode = (data.mode || 'idle').toLowerCase();
+    badge.textContent = mode.toUpperCase();
+    badge.className = 'mode-badge mode-' + mode;
+
+    // Uptime
+    $('uptime').textContent = formatUptime(data.uptime_seconds);
+
+    // Equity
+    var eq = data.equity;
+    var bal = data.balance;
+    $('equity').textContent = fmt$(eq);
+    $('balance').textContent = fmt$(bal);
+
+    if (eq != null && bal != null) {
+      var delta = eq - bal;
+      var el = $('equity-delta');
+      el.textContent = (delta >= 0 ? '+' : '') + fmt$(delta);
+      el.className = 'metric-sub mono ' + pnlClass(delta);
+    }
+
+    // Drawdown
+    var dd = data.drawdown_pct;
+    $('drawdown').textContent = fmtPct(dd);
+    var bar = $('dd-bar');
+    var ddVal = parseFloat(dd) || 0;
+    bar.style.width = Math.min(ddVal * 10, 100) + '%';
+    bar.className = 'dd-bar ' + (ddVal < 5 ? 'dd-yellow' : ddVal < 8 ? 'dd-orange' : 'dd-red');
+
+    // Circuit breaker
+    var cb = $('circuit-breaker');
+    if (data.circuit_breaker_active) {
+      cb.innerHTML = '<span class="cb-active">● ACTIVE</span>';
+    } else {
+      cb.innerHTML = '<span class="cb-off">● OFF</span>';
+    }
+
+    // Streams table (single stream for now)
+    var tbody = $('streams-body');
+    var streamName = data.stream_name || 'default';
+    var pair = data.pair || '—';
+    var cycle = data.cycle_count || 0;
+    var st = data.running ? 'active' : 'off';
+    var dotClass = st === 'active' ? 'dot-active' : 'dot-off';
+    var lastSig = data.last_signal_time ? fmtTime(data.last_signal_time) : '—';
+
+    tbody.innerHTML =
+      '<tr>' +
+      '<td>' + streamName + '</td>' +
+      '<td class="mono">' + pair.replace('_', '/') + '</td>' +
+      '<td class="mono">' + cycle + '</td>' +
+      '<td><span class="dot ' + dotClass + '"></span>' + st + '</td>' +
+      '<td class="mono">' + lastSig + '</td>' +
+      '</tr>';
+  }
+
+  function updatePositions(data) {
+    var positions = data.positions || [];
+    var tbody = $('positions-body');
+    $('pos-count').textContent = positions.length + ' open';
+
+    if (positions.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No open positions</td></tr>';
+      return;
+    }
+
+    var html = '';
+    for (var i = 0; i < positions.length; i++) {
+      var p = positions[i];
+      var digits = p.instrument && p.instrument.indexOf('XAU') >= 0 ? 2 : 5;
+      html +=
+        '<tr>' +
+        '<td>' + (p.instrument || '—').replace('_', '/') + '</td>' +
+        '<td>' + (p.direction || '—').toUpperCase() + '</td>' +
+        '<td class="mono">' + (p.units || 0) + '</td>' +
+        '<td class="mono">' + fmtPrice(p.avg_price, digits) + '</td>' +
+        '<td class="mono">—</td>' +
+        '<td class="mono">—</td>' +
+        '<td class="mono ' + pnlClass(p.unrealized_pnl) + '">' + fmt$(p.unrealized_pnl) + '</td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  function updateWatchlist(data) {
+    var s = data.signal;
+    var tbody = $('watchlist-body');
+
+    if (!s || s.status === 'no_signal') {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No pending signals</td></tr>';
+      return;
+    }
+
+    var dir = s.direction ? s.direction.toUpperCase() : '—';
+    var zone = s.zone_price != null ? fmtPrice(s.zone_price) : '—';
+    var statusBadge = s.status || '—';
+
+    tbody.innerHTML =
+      '<tr>' +
+      '<td>' + (s.pair || '—').replace('_', '/') + '</td>' +
+      '<td>' + dir + '</td>' +
+      '<td class="mono">' + zone + '</td>' +
+      '<td>' + (s.reason || '—') + '</td>' +
+      '<td>' + statusBadge + '</td>' +
+      '</tr>';
+  }
+
+  function updateClosedTrades(data) {
+    var trades = data.trades || [];
+    var tbody = $('closed-body');
+    var totalPnl = data.total_pnl || 0;
+
+    var pnlEl = $('closed-total-pnl');
+    pnlEl.textContent = 'Total: ' + fmt$(totalPnl);
+    pnlEl.className = 'count mono ' + pnlClass(totalPnl);
+
+    if (trades.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No closed trades</td></tr>';
+      return;
+    }
+
+    var html = '';
+    for (var i = 0; i < trades.length; i++) {
+      var t = trades[i];
+      var digits = t.pair && t.pair.indexOf('XAU') >= 0 ? 2 : 5;
+      html +=
+        '<tr>' +
+        '<td>' + (t.pair || '—').replace('_', '/') + '</td>' +
+        '<td>' + (t.direction || '—').toUpperCase() + '</td>' +
+        '<td class="mono">' + fmtPrice(t.entry_price, digits) + '</td>' +
+        '<td class="mono">' + fmtPrice(t.exit_price, digits) + '</td>' +
+        '<td class="mono ' + pnlClass(t.pnl) + '">' + fmt$(t.pnl) + '</td>' +
+        '<td>' + (t.status || '—') + '</td>' +
+        '<td class="mono">' + fmtTime(t.closed_at) + '</td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
+  // ── Poll Loop ────────────────────────────────────────────
+
+  function poll() {
+    Promise.all([
+      fetchJSON('/status'),
+      fetchJSON('/positions'),
+      fetchJSON('/signals/pending'),
+      fetchJSON('/trades/closed?limit=20')
+    ]).then(function(results) {
+      updateStatus(results[0]);
+      updatePositions(results[1]);
+      updateWatchlist(results[2]);
+      updateClosedTrades(results[3]);
+      $('last-refresh').textContent = new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'UTC'}) + ' UTC';
+    }).catch(function(err) {
+      console.error('Poll error:', err);
+    });
+  }
+
+  // Initial poll, then repeat
+  poll();
+  setInterval(poll, POLL_MS);
+
+})();
+</script>
+</body>
+</html>

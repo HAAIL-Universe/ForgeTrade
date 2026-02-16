@@ -25,11 +25,11 @@ Canonical technology decisions for this project. The builder contract (§1) requ
 
 ## Frontend
 
-- **Enabled:** No
-- **Language:** N/A
-- **Framework:** N/A
-- **Directory:** N/A
-- **Build tool:** N/A
+- **Enabled:** Yes
+- **Language:** HTML / CSS / JavaScript (vanilla)
+- **Framework:** None (no build step, no npm)
+- **Directory:** `app/static/`
+- **Build tool:** None (single HTML file served directly by FastAPI)
 
 ## LLM / AI Integration
 
@@ -41,7 +41,7 @@ Canonical technology decisions for this project. The builder contract (§1) requ
 ## Testing
 
 - **Backend tests:** pytest
-- **Frontend e2e:** N/A
+- **Frontend e2e:** Manual browser verification (no JS test framework)
 - **Test directory:** tests/
 
 ## Deployment
@@ -86,10 +86,24 @@ The builder must create `forge.json` at the project root during Phase 0. This fi
     "venv_path": ".venv"
   },
   "frontend": {
-    "enabled": false,
-    "dir": null,
+    "enabled": true,
+    "dir": "app/static",
     "build_cmd": null,
     "test_cmd": null
-  }
+  },
+  "streams": [
+    {
+      "name": "sr-swing",
+      "instrument": "EUR_USD",
+      "strategy": "sr_rejection",
+      "timeframes": ["D", "H4"],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 7,
+      "session_end_utc": 21,
+      "enabled": true
+    }
+  ]
 }
 ```

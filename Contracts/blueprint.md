@@ -8,9 +8,9 @@ Purpose: Define product fundamentals, hard boundaries, and build targets so impl
 
 ## 1) Product intent
 
-ForgeTrade is a CLI-first automated Forex trading bot for personal use. It connects to OANDA's v20 REST API, monitors EUR/USD price action on Daily and 4H timeframes, identifies trade setups based on support/resistance zones and rejection wicks, and autonomously places orders with predefined stop-loss and take-profit levels.
+ForgeTrade is an automated trading bot for personal use. It connects to OANDA's v20 REST API and trades multiple instruments using pluggable strategies running as concurrent streams. The primary stream trades EUR/USD on Daily/4H timeframes using S/R rejection wicks. A secondary stream scalps XAU/USD on H1/M1/S5 timeframes using trend-confirmed pullbacks. A dark-themed web dashboard displays real-time bot state, open positions, pending signals, and closed trade P&L.
 
-The bot operates as a "set and forget" system — the user starts it in a PowerShell terminal, and it runs continuously, printing status to the console. It supports three modes: backtest (historical replay), paper (OANDA practice account), and live (OANDA live account).
+The bot operates as a "set and forget" system — the user starts it in a PowerShell terminal, and it runs continuously with a web dashboard for monitoring. It supports three modes: backtest (historical replay), paper (OANDA practice account), and live (OANDA live account).
 
 ---
 
@@ -67,14 +67,42 @@ The bot operates as a "set and forget" system — the user starts it in a PowerS
    - Output results to console and/or file
 
 8. **Minimal Internal API**
-   - FastAPI server on localhost (for Forge verification gates)
+   - FastAPI server on localhost (for Forge verification gates and dashboard)
    - `GET /health` returns `{"status": "ok"}`
-   - `GET /status` returns bot state (mode, equity, open positions, drawdown)
+   - `GET /status` returns bot state (mode, equity, open positions, drawdown, per-stream status)
+   - `GET /positions` returns current open positions from OANDA
+   - `GET /signals/pending` returns the last evaluated signal (watchlist)
+   - `GET /trades` returns trade log with optional stream filter
+   - `GET /trades/closed` returns closed trades with P&L
+
+9. **Web Dashboard**
+   - Single-page dark-themed HTML dashboard served by FastAPI at `/dashboard/`
+   - Displays: account metrics, open positions, watchlist, closed trades, stream status
+   - Auto-refreshes via polling every 5 seconds
+   - Read-only — no trade placement from the dashboard
+   - No JavaScript framework, no npm, no build step
+
+10. **Strategy Abstraction**
+    - Pluggable strategy interface (`StrategyProtocol`)
+    - S/R Rejection Wick strategy extracted into its own class
+    - EMA indicator added to indicator library
+    - Per-instrument pip values
+
+11. **Multi-Stream Engine**
+    - `EngineManager` runs multiple `TradingEngine` instances concurrently via `asyncio.gather()`
+    - Each stream has its own instrument, strategy, timeframes, and polling interval
+    - Streams configured declaratively in `forge.json`
+    - Single OANDA account shared across streams
+
+12. **Trend-Confirmed Micro-Scalp Strategy (XAU/USD)**
+    - H1 trend gate (EMA21/EMA50), M1 entry, S5 precision timing
+    - Swing-structure SL, fixed 1:1.5 R:R TP
+    - Trailing stop (breakeven at 1R, trail at 1.5R)
+    - Spread filter to reject wide-spread entries
+    - Position count guard (max concurrent configurable per stream)
 
 ### Explicitly not MVP (v0.1)
 
-- No web UI or dashboard
-- No multi-pair support (EUR/USD only)
 - No strategy optimization or parameter tuning
 - No email/SMS/push notifications
 - No multi-user support

@@ -41,6 +41,7 @@ CREATE TABLE trades (
     status          TEXT NOT NULL DEFAULT 'open' CHECK(status IN ('open', 'closed', 'cancelled')),
     opened_at       TEXT NOT NULL,
     closed_at       TEXT,
+    stream_name     TEXT DEFAULT 'default',
     created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 ```
@@ -49,6 +50,7 @@ CREATE TABLE trades (
 CREATE INDEX idx_trades_status ON trades(status);
 CREATE INDEX idx_trades_opened_at ON trades(opened_at);
 CREATE INDEX idx_trades_mode ON trades(mode);
+CREATE INDEX idx_trades_stream ON trades(stream_name);
 ```
 
 ---
@@ -131,11 +133,12 @@ The builder creates migration files in `db/migrations/` during Phase 0. File nam
 ```
 db/migrations/
   001_initial_schema.sql
+  002_add_stream_name.sql
 ```
 
 Each migration file contains:
 - A `-- Migration: NNN` header comment
-- `CREATE TABLE` statements
+- `CREATE TABLE` statements (or `ALTER TABLE` for incremental migrations)
 - `CREATE INDEX` statements
 - No `DROP` statements in initial migrations
 

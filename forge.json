@@ -9,8 +9,8 @@
     "venv_path": "../.venv"
   },
   "frontend": {
-    "enabled": false,
-    "dir": null,
+    "enabled": true,
+    "dir": "app/static",
     "build_cmd": null,
     "test_cmd": null
   }

@@ -18,19 +18,17 @@ Auto-authorize: enabled.
    - `Contracts/ui.md`
    - `evidence/updatedifflog.md` (if it exists)
    - `evidence/audit_ledger.md` (if it exists — summarize last entry or note "No prior audit ledger found")
-3. Execute **Phase 0 (Genesis)** per `Contracts/phases.md`.
-4. After Phase 0, run the full verification hierarchy (static → runtime → behavior → contract) per §9.
+3. Execute **Phase 7 (Web Dashboard)** per `Contracts/phases.md`.
+4. After Phase 7, run the full verification hierarchy (static → runtime → behavior → contract) per §9.
 5. Run `scripts/run_audit.ps1` per §10.2. React to the result:
    - **All PASS (exit 0):** Emit a Phase Sign-off per §10.4. Because `Auto-authorize: enabled`, commit and proceed directly to the next phase without halting.
    - **Any FAIL (exit non-zero):** Enter the Loopback Protocol per §10.3. Fix only the FAIL items, re-verify, re-audit. If 3 consecutive loops fail, STOP with `RISK_EXCEEDS_SCOPE`.
 6. Repeat steps 3–5 for each subsequent phase in order:
-   - Phase 1 — OANDA Broker Client
-   - Phase 2 — Strategy Engine
-   - Phase 3 — Risk Manager + Order Execution
-   - Phase 4 — Trade Logging + CLI Dashboard
-   - Phase 5 — Backtest Engine
-   - Phase 6 — Paper & Live Integration
-7. After the final phase (Phase 6) passes audit and is committed, HALT and report: `"All phases complete."`
+   - Phase 7 — Web Dashboard
+   - Phase 8 — Strategy Abstraction + EMA Indicators
+   - Phase 9 — Multi-Stream Engine Manager
+   - Phase 10 — Trend-Confirmed Micro-Scalp (XAU_USD)
+7. After the final phase (Phase 10) passes audit and is committed, HALT and report: `"All phases complete."`
 
 ## Autonomy Rules
 
@@ -42,4 +40,4 @@ Auto-authorize: enabled.
 
 ## Project Summary
 
-ForgeTrade is an automated Forex trading bot that connects to OANDA's v20 REST API and trades EUR/USD using a price action strategy based on support/resistance zones and rejection wicks. It runs locally in a PowerShell terminal as a single-user CLI application with three modes: backtest, paper trading, and live trading. No frontend, no AI — pure deterministic rules with 1% risk per trade and a 10% drawdown circuit breaker.
+ForgeTrade is an automated trading bot that connects to OANDA's v20 REST API and trades multiple instruments using pluggable strategies. The primary stream trades EUR/USD using S/R rejection wicks on D+H4 timeframes. A secondary stream scalps XAU/USD using trend-confirmed pullbacks on H1/M1/S5 timeframes. A web dashboard provides real-time monitoring. It runs locally in a PowerShell terminal as a single-user application with three modes: backtest, paper trading, and live trading. Pure deterministic rules with configurable risk per trade and a drawdown circuit breaker.

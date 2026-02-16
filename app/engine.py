@@ -9,6 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
+from app.api.routers import update_bot_status, update_pending_signal
 from app.broker.models import OrderRequest
 from app.broker.oanda_client import OandaClient
 from app.config import Config
@@ -37,6 +38,7 @@ class TradingEngine:
         self._broker = broker
         self._drawdown: Optional[DrawdownTracker] = None
         self._running: bool = False
+        self._cycle_count: int = 0
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
@@ -74,10 +76,15 @@ class TradingEngine:
 
         while self._running:
             cycle += 1
+            self._cycle_count += 1
             try:
                 result = await self.run_once()
                 results.append(result)
                 logger.info("Cycle %d: %s", cycle, result.get("action", "unknown"))
+                update_bot_status(
+                    cycle_count=self._cycle_count,
+                    last_cycle_at=datetime.now(timezone.utc).isoformat(),
+                )
             except Exception as exc:
                 logger.error("Cycle %d error: %s", cycle, exc)
                 results.append({"action": "error", "reason": str(exc)})
@@ -146,6 +153,16 @@ class TradingEngine:
         ]
         signal = evaluate_signal(h4, zones)
         if signal is None:
+            update_pending_signal({
+                "pair": self._config.trade_pair,
+                "direction": None,
+                "zone_price": None,
+                "zone_type": None,
+                "reason": "No rejection wick detected",
+                "status": "no_signal",
+                "evaluated_at": utc_now.isoformat(),
+                "stream_name": "default",
+            })
             return {"action": "skipped", "reason": "no_signal"}
 
         # 5 ── Risk calculations
@@ -157,6 +174,18 @@ class TradingEngine:
             atr,
         )
         tp = calculate_tp(signal.entry_price, signal.direction, sl, zones)
+
+        # Update watchlist with the signal (status will become "entered" if order placed)
+        update_pending_signal({
+            "pair": self._config.trade_pair,
+            "direction": signal.direction,
+            "zone_price": signal.sr_zone.price_level,
+            "zone_type": signal.sr_zone.zone_type,
+            "reason": signal.reason,
+            "status": "watching",
+            "evaluated_at": utc_now.isoformat(),
+            "stream_name": "default",
+        })
 
         # 6 ── Account state + position sizing
         summary = await self._broker.get_account_summary()
@@ -183,6 +212,21 @@ class TradingEngine:
             take_profit_price=round(tp, 5),
         )
         order_resp = await self._broker.place_order(order_req)
+
+        # Update watchlist status to "entered"
+        update_pending_signal({
+            "pair": self._config.trade_pair,
+            "direction": signal.direction,
+            "zone_price": signal.sr_zone.price_level,
+            "zone_type": signal.sr_zone.zone_type,
+            "reason": signal.reason,
+            "status": "entered",
+            "evaluated_at": utc_now.isoformat(),
+            "stream_name": "default",
+        })
+        update_bot_status(
+            last_order_time=utc_now.isoformat(),
+        )
 
         return {
             "action": "order_placed",

@@ -51,9 +51,65 @@ paths:
       query_params:
         limit: integer (default 20)
         status: string (optional, filter by open/closed)
+        stream: string (optional, filter by stream_name)
       response:
         trades: TradeRecord[]
         total: integer
+
+  # ── Open Positions ─────────────────────────────────────────
+
+  /positions:
+    get:
+      summary: "Return current open positions from OANDA"
+      auth: none
+      response:
+        positions: PositionRecord[]
+
+  # ── Pending Signals / Watchlist ────────────────────────────
+
+  /signals/pending:
+    get:
+      summary: "Return the last evaluated signal (watchlist)"
+      auth: none
+      response:
+        signal: PendingSignal | null
+
+  # ── Closed Trades ──────────────────────────────────────────
+
+  /trades/closed:
+    get:
+      summary: "Return closed trades with P&L"
+      auth: none
+      query_params:
+        limit: integer (default 20)
+        stream: string (optional)
+      response:
+        trades: TradeRecord[]
+        total: integer
+        total_pnl: number
+
+  # ── Per-Stream Status ──────────────────────────────────────
+
+  /status/{stream_name}:
+    get:
+      summary: "Return status for a single stream"
+      auth: none
+      response:
+        StreamStatus
+
+  # ── Dashboard ──────────────────────────────────────────────
+
+  /dashboard:
+    mount:
+      summary: "Static file mount serving the web dashboard"
+      directory: "app/static"
+      type: StaticFiles
+
+  /:
+    get:
+      summary: "Redirect to /dashboard/index.html"
+      response:
+        redirect: 307 -> /dashboard/index.html
 
 # ── Schemas ──────────────────────────────────────────────────
 
@@ -74,6 +130,17 @@ schemas:
     open_positions: integer
     last_signal_check: datetime | null
     uptime_seconds: number
+    streams: dict[string, StreamStatus]  # keyed by stream name
+
+  StreamStatus:
+    stream_name: string
+    instrument: string
+    strategy: string
+    cycle_count: integer
+    last_cycle_at: datetime | null
+    last_signal_time: datetime | null
+    last_order_time: datetime | null
+    status: string         # "active" | "off" | "error"
 
   TradeRecord:
     id: integer
@@ -93,3 +160,21 @@ schemas:
     status: string         # "open" | "closed" | "cancelled"
     opened_at: datetime
     closed_at: datetime | null
+    stream_name: string | null
+
+  PositionRecord:
+    instrument: string
+    direction: string      # "long" | "short"
+    units: number
+    avg_price: number
+    unrealized_pnl: number
+
+  PendingSignal:
+    pair: string
+    direction: string      # "buy" | "sell"
+    zone_price: number
+    zone_type: string      # "support" | "resistance"
+    reason: string
+    status: string         # "watching" | "entered" | "no_signal" | "skipped"
+    evaluated_at: datetime
+    stream_name: string
