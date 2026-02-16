@@ -115,6 +115,7 @@ def _run_cli() -> None:
 
 async def _run_engine_manager(manager, mode: str, port: int = 8080) -> None:
     """Start the API server and all trading streams concurrently."""
+    import asyncio
     import uvicorn
 
     logger.info("Starting ForgeTrade in %s mode with %d stream(s).",
