@@ -981,7 +981,7 @@ function saveSettings() {
     el.innerHTML =
       checkHtml('chk-circuit', 'Circuit Breaker') +
       checkHtml('chk-session', 'Session Window') +
-      checkHtml('chk-trend', 'H1 Trend') +
+      checkHtml('chk-trend', 'Trend (M5)') +
       checkHtml('chk-spread', 'Spread Filter') +
       checkHtml('chk-pullback', 'EMA Pullback') +
       checkHtml('chk-confirm', 'Candle Pattern') +
@@ -1057,12 +1057,12 @@ function saveSettings() {
     }
     html += '</div>';
 
-    // Primary H1 EMAs (always visible)
+    // Primary trend EMAs (always visible)
     if (ins.trend) {
       html += '<div style="margin-top:8px; padding-top:6px; border-top:1px solid #21262d;">';
-      html += '<div class="insight-stat"><span class="insight-stat-label">H1 EMA(21)</span>' +
+      html += '<div class="insight-stat"><span class="insight-stat-label">Trend: EMA(9)</span>' +
         '<span class="insight-stat-value mono">' + ins.trend.ema_fast + '</span></div>';
-      html += '<div class="insight-stat"><span class="insight-stat-label">H1 EMA(50)</span>' +
+      html += '<div class="insight-stat"><span class="insight-stat-label">Trend: EMA(21)</span>' +
         '<span class="insight-stat-value mono">' + ins.trend.ema_slow + '</span></div>';
       html += '</div>';
     }

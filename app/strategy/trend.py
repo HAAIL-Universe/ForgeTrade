@@ -29,7 +29,7 @@ def detect_trend(
     """Classify trend direction using dual-EMA crossover and price position.
 
     Args:
-        candles_h1: H1 candle history, oldest-first.
+        candles_h1: Candle history, oldest-first.
         ema_fast: Fast EMA period (default 21).
         ema_slow: Slow EMA period (default 50).
 

@@ -59,13 +59,41 @@ class TrendScalpStrategy:
             "checks": checks,
         }
 
-        # 1 ── H1 trend detection (primary)
-        h1_raw = await broker.fetch_candles(instrument, "H1", count=50)
-        h1_candles = [
+        # 1 ── M5 trend detection (scalp-speed, fast EMAs)
+        m5_raw = await broker.fetch_candles(instrument, "M5", count=30)
+        m5_candles = [
             CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
-            for c in h1_raw
+            for c in m5_raw
         ]
-        trend = detect_trend(h1_candles)
+        trend = detect_trend(m5_candles, ema_fast=9, ema_slow=21)
+
+        # Fallback: if M5 is flat, check M15 with standard EMAs
+        if trend.direction == "flat":
+            m15_raw = await broker.fetch_candles(instrument, "M15", count=50)
+            m15_candles = [
+                CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
+                for c in m15_raw
+            ]
+            trend = detect_trend(m15_candles, ema_fast=9, ema_slow=21)
+
+        # Second fallback: if still flat, use EMA slope direction on M5
+        # (EMAs aligned but price between them — still a usable bias)
+        if trend.direction == "flat" and len(m5_candles) >= 21:
+            from app.strategy.indicators import calculate_ema as _ema_calc
+            fast_v = _ema_calc(m5_candles, 9)
+            slow_v = _ema_calc(m5_candles, 21)
+            if fast_v and slow_v:
+                slope = fast_v[-1] - slow_v[-1]
+                # If slope is meaningful (> 0.5 for gold ≈ $0.50 separation)
+                if abs(slope) > 0.5:
+                    from app.strategy.trend import TrendState
+                    trend = TrendState(
+                        direction="bullish" if slope > 0 else "bearish",
+                        ema_fast_value=fast_v[-1],
+                        ema_slow_value=slow_v[-1],
+                        slope=slope,
+                    )
+
         self.last_insight["trend"] = {
             "direction": trend.direction,
             "ema_fast": round(trend.ema_fast_value, 2),
@@ -112,7 +140,7 @@ class TrendScalpStrategy:
         ]
 
         # 3 ── S5 precision timing + spread check
-        s5_raw = await broker.fetch_candles(instrument, "S5", count=5)
+        s5_raw = await broker.fetch_candles(instrument, "S5", count=20)
         s5_candles = [
             CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
             for c in s5_raw
@@ -154,10 +182,10 @@ class TrendScalpStrategy:
                 self.last_insight["ema9"] = round(ema_cur, 2)
                 self.last_insight["price_vs_ema"] = round(price - ema_cur, 2)
                 # Check if it was pullback or confirmation that failed
-                if trend.direction == "bullish" and price <= ema_cur * 1.004:
+                if trend.direction == "bullish" and price <= ema_cur * 1.006:
                     checks["pullback_to_ema"] = True
                     self.last_insight["result"] = "no_confirmation_pattern"
-                elif trend.direction == "bearish" and price >= ema_cur * 0.996:
+                elif trend.direction == "bearish" and price >= ema_cur * 0.994:
                     checks["pullback_to_ema"] = True
                     self.last_insight["result"] = "no_confirmation_pattern"
                 else:

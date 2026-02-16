@@ -102,7 +102,7 @@ def _is_bearish_pin_bar(candle: CandleData) -> bool:
 
 
 def _has_buy_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
-    """Check last 2 candles for a bullish reversal pattern."""
+    """Check last few candles for a bullish entry pattern."""
     if len(candles) < 2:
         return False, ""
     prev, curr = candles[-2], candles[-1]
@@ -115,11 +115,16 @@ def _has_buy_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
     confirmed, pattern = _has_momentum_buy(candles)
     if confirmed:
         return True, pattern
+    # Single bullish candle with decent body (not a doji)
+    body = curr.close - curr.open
+    total = curr.high - curr.low
+    if total > 0 and curr.close > curr.open and body / total >= 0.4:
+        return True, "bullish candle"
     return False, ""
 
 
 def _has_sell_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
-    """Check last 2 candles for a bearish reversal pattern."""
+    """Check last few candles for a bearish entry pattern."""
     if len(candles) < 2:
         return False, ""
     prev, curr = candles[-2], candles[-1]
@@ -132,6 +137,11 @@ def _has_sell_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
     confirmed, pattern = _has_momentum_sell(candles)
     if confirmed:
         return True, pattern
+    # Single bearish candle with decent body (not a doji)
+    body = curr.open - curr.close
+    total = curr.high - curr.low
+    if total > 0 and curr.close < curr.open and body / total >= 0.4:
+        return True, "bearish candle"
     return False, ""
 
 
@@ -173,11 +183,12 @@ def evaluate_scalp_entry(
     last_close = candles_m1[-1].close
 
     if trend.direction == "bullish":
-        # Price should be near or at/below the EMA (pullback)
-        # "Near" = within 0.4% of EMA
-        pullback_threshold = ema_current * 1.004
+        # Price should be near the EMA — either pulled back to it or
+        # slightly above.  For gold scalps the zone is generous.
+        # "Near" = within 0.6% of EMA
+        pullback_threshold = ema_current * 1.006
         if last_close > pullback_threshold:
-            return None  # Price hasn't pulled back to EMA
+            return None  # Price has run too far from EMA
 
         # Check for bullish confirmation
         confirmed, pattern = _has_buy_confirmation(candles_m1)
@@ -196,10 +207,11 @@ def evaluate_scalp_entry(
         )
 
     elif trend.direction == "bearish":
-        # Price should be near or at/above the EMA (pullback up)
-        pullback_threshold = ema_current * 0.996
+        # Price should be near the EMA — either pulled back up or
+        # slightly below.
+        pullback_threshold = ema_current * 0.994
         if last_close < pullback_threshold:
-            return None  # Price hasn't pulled back up to EMA
+            return None  # Price has run too far from EMA
 
         # Check for bearish confirmation
         confirmed, pattern = _has_sell_confirmation(candles_m1)
