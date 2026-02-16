@@ -29,6 +29,9 @@ class TrendScalpStrategy:
     MAX_SPREAD_PIPS: float = 4.0
     DEFAULT_RR_RATIO: float = 1.5
 
+    def __init__(self) -> None:
+        self.last_insight: dict = {}
+
     async def evaluate(self, broker, config) -> Optional[StrategyResult]:
         """Run the trend-scalp evaluation pipeline.
 
@@ -42,6 +45,21 @@ class TrendScalpStrategy:
         instrument = getattr(config, "trade_pair", "XAU_USD")
         pip_value = INSTRUMENT_PIP_VALUES.get(instrument, 0.01)
 
+        # Base insight — updated progressively through the evaluation
+        checks = {
+            "trend_detected": False,
+            "pullback_to_ema": False,
+            "spread_acceptable": False,
+            "confirmation_pattern": False,
+            "sl_valid": False,
+            "risk_calculated": False,
+        }
+        self.last_insight = {
+            "strategy": "Trend-Confirmed Scalp",
+            "pair": instrument,
+            "checks": checks,
+        }
+
         # 1 ── H1 trend detection
         h1_raw = await broker.fetch_candles(instrument, "H1", count=50)
         h1_candles = [
@@ -49,8 +67,16 @@ class TrendScalpStrategy:
             for c in h1_raw
         ]
         trend = detect_trend(h1_candles)
+        self.last_insight["trend"] = {
+            "direction": trend.direction,
+            "ema_fast": round(trend.ema_fast_value, 2),
+            "ema_slow": round(trend.ema_slow_value, 2),
+            "slope": round(trend.slope, 4),
+        }
         if trend.direction == "flat":
+            self.last_insight["result"] = "no_trend"
             return None
+        checks["trend_detected"] = True
 
         # 2 ── M1 pullback and confirmation
         m1_raw = await broker.fetch_candles(instrument, "M1", count=20)
@@ -66,21 +92,64 @@ class TrendScalpStrategy:
             for c in s5_raw
         ]
 
+        # Current price snapshot for the dashboard
+        if m1_candles:
+            last_m1 = m1_candles[-1]
+            self.last_insight["latest_candle"] = {
+                "timeframe": "M1",
+                "time": last_m1.time,
+                "open": last_m1.open,
+                "high": last_m1.high,
+                "low": last_m1.low,
+                "close": last_m1.close,
+            }
+
         # Spread check using S5 candle as proxy
         if s5_candles:
             last_s5 = s5_candles[-1]
-            # Estimate bid/ask from the S5 candle
             mid = last_s5.close
             half_spread = (last_s5.high - last_s5.low) / 2
             bid_est = mid - half_spread
             ask_est = mid + half_spread
+            spread_pips = abs(ask_est - bid_est) / pip_value
+            self.last_insight["spread_pips"] = round(spread_pips, 1)
+            self.last_insight["max_spread_pips"] = self.MAX_SPREAD_PIPS
             if not is_spread_acceptable(bid_est, ask_est, self.MAX_SPREAD_PIPS, pip_value):
+                self.last_insight["result"] = "spread_too_wide"
                 return None
+        checks["spread_acceptable"] = True
 
         # 4 ── Evaluate scalp entry
         entry_signal = evaluate_scalp_entry(m1_candles, s5_candles, trend)
         if entry_signal is None:
+            # Determine which sub-check failed for insight
+            from app.strategy.indicators import calculate_ema as _ema
+            ema_vals = _ema(m1_candles, 9)
+            if ema_vals and m1_candles:
+                ema_cur = ema_vals[-1]
+                price = m1_candles[-1].close
+                self.last_insight["ema9"] = round(ema_cur, 2)
+                self.last_insight["price_vs_ema"] = round(price - ema_cur, 2)
+                # Check if it was pullback or confirmation that failed
+                if trend.direction == "bullish" and price <= ema_cur * 1.0015:
+                    checks["pullback_to_ema"] = True
+                    self.last_insight["result"] = "no_confirmation_pattern"
+                elif trend.direction == "bearish" and price >= ema_cur * 0.9985:
+                    checks["pullback_to_ema"] = True
+                    self.last_insight["result"] = "no_confirmation_pattern"
+                else:
+                    self.last_insight["result"] = "no_pullback"
+            else:
+                self.last_insight["result"] = "no_pullback"
             return None
+
+        checks["pullback_to_ema"] = True
+        checks["confirmation_pattern"] = True
+        self.last_insight["signal"] = {
+            "direction": entry_signal.direction,
+            "entry_price": entry_signal.entry_price,
+            "reason": entry_signal.reason,
+        }
 
         # 5 ── Calculate SL and TP
         sl = calculate_scalp_sl(
@@ -90,7 +159,9 @@ class TrendScalpStrategy:
             pip_value=pip_value,
         )
         if sl is None:
-            return None  # SL outside bounds
+            self.last_insight["result"] = "sl_out_of_bounds"
+            return None
+        checks["sl_valid"] = True
 
         tp = calculate_scalp_tp(
             entry_price=entry_signal.entry_price,
@@ -98,6 +169,11 @@ class TrendScalpStrategy:
             sl_price=sl,
             rr_ratio=self.DEFAULT_RR_RATIO,
         )
+        checks["risk_calculated"] = True
+        self.last_insight["sl"] = sl
+        self.last_insight["tp"] = tp
+        self.last_insight["rr_ratio"] = self.DEFAULT_RR_RATIO
+        self.last_insight["result"] = "signal_found"
 
         # Build an EntrySignal compatible with the existing engine
         # (uses a dummy SRZone since scalps don't use S/R zones)

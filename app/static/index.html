@@ -162,6 +162,14 @@
   .check-label { color: #8b949e; min-width: 140px; }
   .check-detail { color: #c9d1d9; font-size: 13px; }
 
+  .stream-tabs { display: flex; gap: 0; margin-bottom: 10px; border-bottom: 1px solid #30363d; }
+  .stream-tab { padding: 6px 14px; cursor: pointer; color: #8b949e; font-size: 13px; font-weight: 600; border: 1px solid transparent; border-bottom: 2px solid transparent; background: none; transition: all .15s; }
+  .stream-tab:hover { color: #c9d1d9; background: #161b2233; }
+  .stream-tab.active { color: #58a6ff; border-bottom: 2px solid #58a6ff; }
+  .stream-tab .tab-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 6px; }
+  .tab-dot-swing { background: #58a6ff; }
+  .tab-dot-scalp { background: #f0883e; }
+
   .insight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
   @media (max-width: 768px) { .insight-grid { grid-template-columns: 1fr; } }
 
@@ -310,6 +318,9 @@
   </div>
   <div class="card-body">
 
+  <!-- Stream tabs -->
+  <div class="stream-tabs" id="insight-tabs"></div>
+
   <!-- Readiness -->
   <div style="padding: 0 4px 8px;">
     <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -323,73 +334,11 @@
 
   <!-- Checklist + Details side by side -->
   <div class="insight-grid">
-    <!-- LEFT: Checklist -->
-    <div>
-      <div class="check-item" id="chk-circuit">
-        <span class="check-icon check-wait">◯</span>
-        <span class="check-label">Circuit Breaker</span>
-        <span class="check-detail mono" id="chk-circuit-detail">—</span>
-      </div>
-      <div class="check-item" id="chk-session">
-        <span class="check-icon check-wait">◯</span>
-        <span class="check-label">Session Window</span>
-        <span class="check-detail mono" id="chk-session-detail">—</span>
-      </div>
-      <div class="check-item" id="chk-zones">
-        <span class="check-icon check-wait">◯</span>
-        <span class="check-label">S/R Zones</span>
-        <span class="check-detail mono" id="chk-zones-detail">—</span>
-      </div>
-      <div class="check-item" id="chk-proximity">
-        <span class="check-icon check-wait">◯</span>
-        <span class="check-label">Zone Proximity</span>
-        <span class="check-detail mono" id="chk-proximity-detail">—</span>
-      </div>
-      <div class="check-item" id="chk-wick">
-        <span class="check-icon check-wait">◯</span>
-        <span class="check-label">Rejection Wick</span>
-        <span class="check-detail mono" id="chk-wick-detail">—</span>
-      </div>
-      <div class="check-item" id="chk-risk">
-        <span class="check-icon check-wait">◯</span>
-        <span class="check-label">Risk / SL+TP</span>
-        <span class="check-detail mono" id="chk-risk-detail">—</span>
-      </div>
-    </div>
+    <!-- LEFT: Checklist (dynamically populated) -->
+    <div id="insight-checklist"></div>
 
-    <!-- RIGHT: Zone Map + Stats -->
-    <div>
-      <div style="color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Zone Map</div>
-      <div id="zone-chips" style="min-height:28px;">—</div>
-      <div style="margin-top:12px; color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Nearest Zone</div>
-      <div class="insight-stat">
-        <span class="insight-stat-label">Level</span>
-        <span class="insight-stat-value mono" id="nz-price">—</span>
-      </div>
-      <div class="insight-stat">
-        <span class="insight-stat-label">Type</span>
-        <span class="insight-stat-value mono" id="nz-type">—</span>
-      </div>
-      <div class="insight-stat">
-        <span class="insight-stat-label">Distance</span>
-        <span class="insight-stat-value mono" id="nz-distance">—</span>
-      </div>
-      <div class="proximity-bar-container"><div class="proximity-bar prox-far" id="nz-bar" style="width:0%"></div></div>
-      <div style="margin-top:12px;">
-        <div class="insight-stat">
-          <span class="insight-stat-label">Price</span>
-          <span class="insight-stat-value mono" id="ins-price">—</span>
-        </div>
-        <div class="insight-stat">
-          <span class="insight-stat-label">ATR (Daily)</span>
-          <span class="insight-stat-value mono" id="ins-atr">—</span>
-        </div>
-        <div class="insight-stat">
-          <span class="insight-stat-label">Last H4</span>
-          <span class="insight-stat-value mono" id="ins-h4">—</span>
-        </div>
-      </div>
-    </div>
+    <!-- RIGHT: Details (dynamically populated) -->
+    <div id="insight-detail-panel"></div>
   </div>
   </div>
 </div>
@@ -789,56 +738,125 @@ function saveSettings() {
 
   // ── Strategy Insight ──────────────────────────────────────
 
-  function setCheck(id, pass, detail) {
-    var icon = $(id).querySelector('.check-icon');
+  var _insightData = {};        // All stream insights
+  var _activeInsightTab = null; // Currently selected stream name
+
+  function checkHtml(id, label) {
+    return '<div class="check-item" id="' + id + '">' +
+      '<span class="check-icon check-wait">◯</span>' +
+      '<span class="check-label">' + label + '</span>' +
+      '<span class="check-detail mono" id="' + id + '-detail">—</span>' +
+      '</div>';
+  }
+  function setCheckDyn(id, pass, detail) {
+    var el = $(id);
+    if (!el) return;
+    var icon = el.querySelector('.check-icon');
     var detailEl = $(id + '-detail');
-    if (pass === true) {
-      icon.textContent = '✓';
-      icon.className = 'check-icon check-pass';
-    } else if (pass === false) {
-      icon.textContent = '✗';
-      icon.className = 'check-icon check-fail';
-    } else {
-      icon.textContent = '◯';
-      icon.className = 'check-icon check-wait';
-    }
+    if (pass === true) { icon.textContent = '✓'; icon.className = 'check-icon check-pass'; }
+    else if (pass === false) { icon.textContent = '✗'; icon.className = 'check-icon check-fail'; }
+    else { icon.textContent = '◯'; icon.className = 'check-icon check-wait'; }
     if (detailEl) detailEl.textContent = detail || '—';
   }
 
   function updateInsight(data) {
-    var insights = data.insights || {};
-    var keys = Object.keys(insights);
+    _insightData = data.insights || {};
+    var keys = Object.keys(_insightData);
     if (keys.length === 0) {
       $('insight-strategy').textContent = 'Waiting...';
       $('readiness-pct').textContent = '0%';
       $('readiness-bar').style.width = '0%';
+      $('insight-tabs').innerHTML = '';
+      $('insight-checklist').innerHTML = '';
+      $('insight-detail-panel').innerHTML = '';
       return;
     }
 
-    // Take first stream's insight
-    var ins = insights[keys[0]];
+    // Build stream tabs
+    var tabsHtml = '';
+    for (var ti = 0; ti < keys.length; ti++) {
+      var sn = keys[ti];
+      var isScalp = sn.indexOf('scalp') >= 0;
+      var dotClass = isScalp ? 'tab-dot-scalp' : 'tab-dot-swing';
+      var pair = _insightData[sn].pair || '';
+      var label = pair.replace('_', '/') || sn;
+      tabsHtml += '<div class="stream-tab' + (_activeInsightTab === sn || (!_activeInsightTab && ti === 0) ? ' active' : '') +
+        '" data-stream="' + sn + '" onclick="selectInsightTab(\'' + sn + '\')">' +
+        '<span class="tab-dot ' + dotClass + '"></span>' + label + '</div>';
+    }
+    $('insight-tabs').innerHTML = tabsHtml;
+
+    // Auto-select first tab if none active
+    if (!_activeInsightTab || keys.indexOf(_activeInsightTab) < 0) {
+      _activeInsightTab = keys[0];
+    }
+
+    renderInsightForStream(_activeInsightTab);
+  }
+
+  function selectInsightTab(streamName) {
+    _activeInsightTab = streamName;
+    // Re-render tabs active state
+    var tabs = document.querySelectorAll('.stream-tab');
+    for (var t = 0; t < tabs.length; t++) {
+      tabs[t].classList.toggle('active', tabs[t].getAttribute('data-stream') === streamName);
+    }
+    renderInsightForStream(streamName);
+  }
+
+  function renderInsightForStream(streamName) {
+    var ins = _insightData[streamName];
+    if (!ins) return;
     var checks = ins.checks || {};
+    var isScalp = (ins.strategy || '').toLowerCase().indexOf('scalp') >= 0;
 
     $('insight-strategy').textContent = (ins.strategy || '—').toUpperCase() + ' · ' + (ins.pair || '').replace('_', '/');
 
-    // Update each checklist item
-    var sessionHours = '07:00–21:00 UTC';
-    setCheck('chk-circuit', checks.circuit_breaker_clear,
+    var checklistEl = $('insight-checklist');
+    var detailEl = $('insight-detail-panel');
+
+    if (isScalp) {
+      renderScalpChecklist(ins, checks, checklistEl);
+      renderScalpDetails(ins, detailEl);
+    } else {
+      renderSwingChecklist(ins, checks, checklistEl);
+      renderSwingDetails(ins, detailEl);
+    }
+
+    // Readiness percentage
+    var checkKeys = Object.keys(checks);
+    var passed = 0;
+    for (var i = 0; i < checkKeys.length; i++) {
+      if (checks[checkKeys[i]] === true) passed++;
+    }
+    var pct = checkKeys.length > 0 ? Math.round((passed / checkKeys.length) * 100) : 0;
+    $('readiness-pct').textContent = pct + '%';
+    $('readiness-pct').className = 'readiness-pct mono ' + (pct >= 100 ? 'check-pass' : pct >= 50 ? 'check-wait' : 'check-fail');
+    $('readiness-bar').style.width = pct + '%';
+  }
+
+  // ── SR Rejection (swing) checklist ──────
+  function renderSwingChecklist(ins, checks, el) {
+    el.innerHTML =
+      checkHtml('chk-circuit', 'Circuit Breaker') +
+      checkHtml('chk-session', 'Session Window') +
+      checkHtml('chk-zones', 'S/R Zones') +
+      checkHtml('chk-proximity', 'Zone Proximity') +
+      checkHtml('chk-wick', 'Rejection Wick') +
+      checkHtml('chk-risk', 'Risk / SL+TP');
+
+    setCheckDyn('chk-circuit', checks.circuit_breaker_clear,
       checks.circuit_breaker_clear ? 'Clear' : 'ACTIVE — trading halted');
-    setCheck('chk-session', checks.in_session,
-      checks.in_session ? 'In session (' + sessionHours + ')' : 'Outside hours');
+    setCheckDyn('chk-session', checks.in_session,
+      checks.in_session ? 'In session' : 'Outside hours');
 
     var zoneDetail = '—';
-    if (ins.zones) {
-      zoneDetail = ins.zones.total + ' zones (' + ins.zones.support.length + 'S / ' + ins.zones.resistance.length + 'R)';
-    }
-    setCheck('chk-zones', checks.zones_detected, zoneDetail);
+    if (ins.zones) zoneDetail = ins.zones.total + ' zones (' + ins.zones.support.length + 'S / ' + ins.zones.resistance.length + 'R)';
+    setCheckDyn('chk-zones', checks.zones_detected, zoneDetail);
 
     var proxDetail = '—';
-    if (ins.nearest_zone) {
-      proxDetail = ins.nearest_zone.distance_pips + ' pips to ' + ins.nearest_zone.type;
-    }
-    setCheck('chk-proximity', checks.zone_proximity, proxDetail);
+    if (ins.nearest_zone) proxDetail = ins.nearest_zone.distance_pips + ' pips to ' + ins.nearest_zone.type;
+    setCheckDyn('chk-proximity', checks.zone_proximity, proxDetail);
 
     var wickDetail = '—';
     if (ins.latest_h4) {
@@ -851,71 +869,158 @@ function saveSettings() {
       else parts.push('No zone touch');
       wickDetail = parts.join(' · ');
     }
-    setCheck('chk-wick', checks.rejection_wick, wickDetail);
+    setCheckDyn('chk-wick', checks.rejection_wick, wickDetail);
 
     var riskDetail = '—';
     if (ins.signal) {
       riskDetail = ins.signal.direction.toUpperCase() + ' @ ' + ins.signal.entry +
         ' SL:' + ins.signal.sl + ' TP:' + ins.signal.tp;
     }
-    setCheck('chk-risk', checks.risk_calculated, riskDetail);
+    setCheckDyn('chk-risk', checks.risk_calculated, riskDetail);
+  }
 
-    // Readiness percentage
-    var checkKeys = ['circuit_breaker_clear', 'in_session', 'zones_detected', 'zone_proximity', 'rejection_wick', 'risk_calculated'];
-    var passed = 0;
-    for (var i = 0; i < checkKeys.length; i++) {
-      if (checks[checkKeys[i]] === true) passed++;
-    }
-    var pct = Math.round((passed / checkKeys.length) * 100);
-    $('readiness-pct').textContent = pct + '%';
-    $('readiness-pct').className = 'readiness-pct mono ' + (pct >= 100 ? 'check-pass' : pct >= 50 ? 'check-wait' : 'check-fail');
-    $('readiness-bar').style.width = pct + '%';
-
-    // Zone chips
-    var chipsEl = $('zone-chips');
+  function renderSwingDetails(ins, el) {
+    var html = '';
+    // Zone map
+    html += '<div style="color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Zone Map</div>';
     if (ins.zones && (ins.zones.support.length > 0 || ins.zones.resistance.length > 0)) {
-      var chipHtml = '';
+      var chips = '';
       for (var si = 0; si < ins.zones.support.length; si++) {
         var sz = ins.zones.support[si];
-        var isNearest = ins.nearest_zone && Math.abs(sz.price - ins.nearest_zone.price) < 0.00001;
-        chipHtml += '<span class="zone-chip zone-support ' + (isNearest ? 'zone-nearest' : '') + '">' +
-          'S ' + sz.price.toFixed(5) + ' (' + sz.touches + ')</span>';
+        var isN = ins.nearest_zone && Math.abs(sz.price - ins.nearest_zone.price) < 0.00001;
+        chips += '<span class="zone-chip zone-support ' + (isN ? 'zone-nearest' : '') + '">S ' + sz.price.toFixed(5) + ' (' + sz.touches + ')</span>';
       }
       for (var ri = 0; ri < ins.zones.resistance.length; ri++) {
         var rz = ins.zones.resistance[ri];
-        var isNearestR = ins.nearest_zone && Math.abs(rz.price - ins.nearest_zone.price) < 0.00001;
-        chipHtml += '<span class="zone-chip zone-resistance ' + (isNearestR ? 'zone-nearest' : '') + '">' +
-          'R ' + rz.price.toFixed(5) + ' (' + rz.touches + ')</span>';
+        var isNR = ins.nearest_zone && Math.abs(rz.price - ins.nearest_zone.price) < 0.00001;
+        chips += '<span class="zone-chip zone-resistance ' + (isNR ? 'zone-nearest' : '') + '">R ' + rz.price.toFixed(5) + ' (' + rz.touches + ')</span>';
       }
-      chipsEl.innerHTML = chipHtml;
+      html += '<div style="min-height:28px;">' + chips + '</div>';
     } else {
-      chipsEl.textContent = 'No zones';
+      html += '<div style="min-height:28px;">No zones</div>';
     }
-
-    // Nearest zone stats
-    if (ins.nearest_zone) {
-      $('nz-price').textContent = ins.nearest_zone.price.toFixed(5);
-      $('nz-type').textContent = ins.nearest_zone.type.toUpperCase();
-      $('nz-distance').textContent = ins.nearest_zone.distance_pips + ' pips';
-      // Proximity bar: 0 pips = 100%, 50+ pips = 0%
-      var proxPct = Math.max(0, Math.min(100, (1 - ins.nearest_zone.distance_pips / 50) * 100));
-      $('nz-bar').style.width = proxPct + '%';
-      $('nz-bar').className = 'proximity-bar ' + (proxPct > 60 ? 'prox-close' : proxPct > 30 ? 'prox-mid' : 'prox-far');
-    } else {
-      $('nz-price').textContent = '—';
-      $('nz-type').textContent = '—';
-      $('nz-distance').textContent = '—';
-      $('nz-bar').style.width = '0%';
-    }
-
     // Stats
-    $('ins-price').textContent = ins.current_price ? ins.current_price.toFixed(5) : '—';
-    $('ins-atr').textContent = ins.atr ? ins.atr.toFixed(5) : '—';
+    html += '<div style="margin-top:12px;"><div class="insight-stat"><span class="insight-stat-label">Price</span><span class="insight-stat-value mono">' +
+      (ins.current_price ? ins.current_price.toFixed(5) : '—') + '</span></div>';
+    html += '<div class="insight-stat"><span class="insight-stat-label">ATR (Daily)</span><span class="insight-stat-value mono">' +
+      (ins.atr ? ins.atr.toFixed(5) : '—') + '</span></div>';
     if (ins.latest_h4) {
-      $('ins-h4').textContent = 'O:' + ins.latest_h4.open.toFixed(5) + ' H:' + ins.latest_h4.high.toFixed(5) + ' L:' + ins.latest_h4.low.toFixed(5) + ' C:' + ins.latest_h4.close.toFixed(5);
-    } else {
-      $('ins-h4').textContent = '—';
+      html += '<div class="insight-stat"><span class="insight-stat-label">Last H4</span><span class="insight-stat-value mono">O:' +
+        ins.latest_h4.open.toFixed(5) + ' H:' + ins.latest_h4.high.toFixed(5) + ' L:' + ins.latest_h4.low.toFixed(5) + ' C:' + ins.latest_h4.close.toFixed(5) + '</span></div>';
     }
+    html += '</div>';
+    el.innerHTML = html;
+  }
+
+  // ── Trend Scalp checklist ──────
+  function renderScalpChecklist(ins, checks, el) {
+    el.innerHTML =
+      checkHtml('chk-circuit', 'Circuit Breaker') +
+      checkHtml('chk-session', 'Session Window') +
+      checkHtml('chk-trend', 'H1 Trend') +
+      checkHtml('chk-spread', 'Spread Filter') +
+      checkHtml('chk-pullback', 'EMA Pullback') +
+      checkHtml('chk-confirm', 'Candle Pattern') +
+      checkHtml('chk-sl', 'SL Valid') +
+      checkHtml('chk-risk', 'Risk / SL+TP');
+
+    setCheckDyn('chk-circuit', checks.circuit_breaker_clear,
+      checks.circuit_breaker_clear ? 'Clear' : 'ACTIVE — trading halted');
+    setCheckDyn('chk-session', checks.in_session,
+      checks.in_session ? 'In session' : 'Outside hours');
+
+    // Trend
+    var trendDetail = '—';
+    if (ins.trend) {
+      trendDetail = ins.trend.direction.toUpperCase() + ' (slope: ' + ins.trend.slope + ')';
+    }
+    setCheckDyn('chk-trend', checks.trend_detected, trendDetail);
+
+    // Spread
+    var spreadDetail = '—';
+    if (ins.spread_pips !== undefined) {
+      spreadDetail = ins.spread_pips + ' pips (max ' + (ins.max_spread_pips || 4) + ')';
+    }
+    setCheckDyn('chk-spread', checks.spread_acceptable, spreadDetail);
+
+    // Pullback
+    var pullDetail = '—';
+    if (ins.ema9 !== undefined) {
+      pullDetail = 'EMA(9): ' + ins.ema9 + ' / Δ: ' + ins.price_vs_ema;
+    }
+    setCheckDyn('chk-pullback', checks.pullback_to_ema, pullDetail);
+
+    // Confirmation pattern
+    var confDetail = '—';
+    if (ins.signal) confDetail = ins.signal.reason;
+    else if (ins.result === 'no_confirmation_pattern') confDetail = 'No pattern found';
+    setCheckDyn('chk-confirm', checks.confirmation_pattern, confDetail);
+
+    // SL valid
+    var slDetail = '—';
+    if (ins.sl !== undefined) slDetail = ins.sl.toFixed(2);
+    else if (ins.result === 'sl_out_of_bounds') slDetail = 'SL outside bounds';
+    setCheckDyn('chk-sl', checks.sl_valid, slDetail);
+
+    // Risk
+    var riskDetail = '—';
+    if (ins.signal && ins.sl !== undefined && ins.tp !== undefined) {
+      riskDetail = ins.signal.direction.toUpperCase() + ' @ ' + ins.signal.entry_price.toFixed(2) +
+        ' SL:' + ins.sl.toFixed(2) + ' TP:' + ins.tp.toFixed(2);
+    }
+    setCheckDyn('chk-risk', checks.risk_calculated, riskDetail);
+  }
+
+  function renderScalpDetails(ins, el) {
+    var html = '';
+    // Trend overview
+    html += '<div style="color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Trend Analysis</div>';
+    if (ins.trend) {
+      var dir = ins.trend.direction;
+      var dirColor = dir === 'bullish' ? '#3fb950' : dir === 'bearish' ? '#f85149' : '#d29922';
+      html += '<div class="insight-stat"><span class="insight-stat-label">Direction</span>' +
+        '<span class="insight-stat-value mono" style="color:' + dirColor + '">' + dir.toUpperCase() + '</span></div>';
+      html += '<div class="insight-stat"><span class="insight-stat-label">EMA(21)</span>' +
+        '<span class="insight-stat-value mono">' + ins.trend.ema_fast + '</span></div>';
+      html += '<div class="insight-stat"><span class="insight-stat-label">EMA(50)</span>' +
+        '<span class="insight-stat-value mono">' + ins.trend.ema_slow + '</span></div>';
+      html += '<div class="insight-stat"><span class="insight-stat-label">Slope</span>' +
+        '<span class="insight-stat-value mono" style="color:' + dirColor + '">' + ins.trend.slope + '</span></div>';
+    } else {
+      html += '<div style="min-height:28px; color:#8b949e;">No trend data</div>';
+    }
+
+    // Latest candle
+    html += '<div style="margin-top:12px; color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Latest M1 Candle</div>';
+    if (ins.latest_candle) {
+      var c = ins.latest_candle;
+      var prec = 2; // Gold = 2 decimals
+      html += '<div class="insight-stat"><span class="insight-stat-label">Price</span>' +
+        '<span class="insight-stat-value mono">' + c.close.toFixed(prec) + '</span></div>';
+      html += '<div class="insight-stat"><span class="insight-stat-label">OHLC</span>' +
+        '<span class="insight-stat-value mono">O:' + c.open.toFixed(prec) + ' H:' + c.high.toFixed(prec) + ' L:' + c.low.toFixed(prec) + '</span></div>';
+    }
+
+    // Signal if found
+    if (ins.signal) {
+      html += '<div style="margin-top:12px; color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Signal</div>';
+      var sigColor = ins.signal.direction === 'buy' ? '#3fb950' : '#f85149';
+      html += '<div class="insight-stat"><span class="insight-stat-label">Direction</span>' +
+        '<span class="insight-stat-value mono" style="color:' + sigColor + '">' + ins.signal.direction.toUpperCase() + '</span></div>';
+      html += '<div class="insight-stat"><span class="insight-stat-label">Entry</span>' +
+        '<span class="insight-stat-value mono">' + ins.signal.entry_price.toFixed(2) + '</span></div>';
+      if (ins.sl !== undefined) html += '<div class="insight-stat"><span class="insight-stat-label">SL</span><span class="insight-stat-value mono">' + ins.sl.toFixed(2) + '</span></div>';
+      if (ins.tp !== undefined) html += '<div class="insight-stat"><span class="insight-stat-label">TP</span><span class="insight-stat-value mono">' + ins.tp.toFixed(2) + '</span></div>';
+      if (ins.rr_ratio) html += '<div class="insight-stat"><span class="insight-stat-label">R:R</span><span class="insight-stat-value mono">1:' + ins.rr_ratio + '</span></div>';
+    }
+
+    // Spread
+    if (ins.spread_pips !== undefined) {
+      html += '<div style="margin-top:12px;"><div class="insight-stat"><span class="insight-stat-label">Est. Spread</span>' +
+        '<span class="insight-stat-value mono">' + ins.spread_pips + ' pips</span></div></div>';
+    }
+
+    el.innerHTML = html;
   }
 
   // ── Poll Loop ────────────────────────────────────────────

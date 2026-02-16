@@ -19,7 +19,10 @@
       "name": "sr-swing",
       "instrument": "EUR_USD",
       "strategy": "sr_rejection",
-      "timeframes": ["D", "H4"],
+      "timeframes": [
+        "D",
+        "H4"
+      ],
       "poll_interval_seconds": 300,
       "risk_per_trade_pct": 1.0,
       "max_concurrent_positions": 1,
@@ -31,13 +34,19 @@
       "name": "micro-scalp",
       "instrument": "XAU_USD",
       "strategy": "trend_scalp",
-      "timeframes": ["H1", "M5"],
-      "poll_interval_seconds": 60,
+      "timeframes": [
+        "H1",
+        "M1",
+        "S5"
+      ],
+      "poll_interval_seconds": 30,
       "risk_per_trade_pct": 0.5,
-      "max_concurrent_positions": 2,
-      "session_start_utc": 8,
-      "session_end_utc": 16,
-      "enabled": false
+      "max_concurrent_positions": 3,
+      "session_start_utc": 7,
+      "session_end_utc": 21,
+      "enabled": true
     }
-  ]
+  ],
+  "max_drawdown_pct": 10.0,
+  "rr_ratio": 2.0
 }
