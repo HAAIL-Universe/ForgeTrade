@@ -230,6 +230,22 @@ class TradingEngine:
         if signal.direction == "sell":
             units = -units
 
+        # 4b ── Position count guard
+        if self._stream_config and self._stream_config.max_concurrent_positions > 0:
+            try:
+                open_positions = await self._broker.list_open_positions()
+                instrument_positions = sum(
+                    1 for p in open_positions
+                    if p.instrument == self.instrument
+                )
+                if instrument_positions >= self._stream_config.max_concurrent_positions:
+                    return {
+                        "action": "skipped",
+                        "reason": "max_concurrent_positions",
+                    }
+            except Exception:
+                pass  # If we can't check, proceed cautiously
+
         # 5 ── Place order
         price_digits = 2 if "XAU" in self.instrument else 5
         order_req = OrderRequest(

@@ -5,10 +5,12 @@ Used by EngineManager to instantiate strategy from StreamConfig.strategy.
 
 from app.strategy.base import StrategyProtocol
 from app.strategy.sr_rejection import SRRejectionStrategy
+from app.strategy.trend_scalp import TrendScalpStrategy
 
 
 STRATEGY_REGISTRY: dict[str, type] = {
     "sr_rejection": SRRejectionStrategy,
+    "trend_scalp": TrendScalpStrategy,
 }
 
 

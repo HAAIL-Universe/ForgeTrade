@@ -239,3 +239,31 @@ class OandaClient:
         resp = await self._request_with_retry("put", url, json=body)
 
         return resp.json()
+
+    async def modify_trade_sl(
+        self,
+        trade_id: str,
+        new_sl_price: float,
+    ) -> dict:
+        """Update the stop-loss on an open trade.
+
+        Args:
+            trade_id: OANDA trade ID.
+            new_sl_price: New stop-loss price.
+
+        Returns:
+            Raw OANDA response dict.
+        """
+        url = (
+            f"{self._base_url}/v3/accounts/{self._account_id}"
+            f"/trades/{trade_id}/orders"
+        )
+        body = {
+            "stopLoss": {
+                "price": f"{new_sl_price:.5f}",
+            }
+        }
+
+        resp = await self._request_with_retry("put", url, json=body)
+
+        return resp.json()
