@@ -84,11 +84,28 @@ class TradingEngine:
 
     async def initialize(self) -> None:
         """Fetch initial account state and set up the drawdown tracker."""
-        summary = await self._broker.get_account_summary()
-        self._drawdown = DrawdownTracker(
-            initial_equity=summary.equity,
-            max_drawdown_pct=self._config.max_drawdown_pct,
-        )
+        try:
+            summary = await self._broker.get_account_summary()
+            self._drawdown = DrawdownTracker(
+                initial_equity=summary.equity,
+                max_drawdown_pct=self._config.max_drawdown_pct,
+            )
+            update_bot_status(
+                stream_name=self.stream_name,
+                equity=summary.equity,
+                balance=summary.balance,
+                running=True,
+            )
+        except Exception as exc:
+            logger.error(
+                "Stream '%s' — failed to initialise (OANDA unreachable?): %s",
+                self.stream_name, exc,
+            )
+            # Create a dummy drawdown tracker so the loop can still run
+            self._drawdown = DrawdownTracker(
+                initial_equity=0.0,
+                max_drawdown_pct=self._config.max_drawdown_pct,
+            )
         self._running = True
 
     def stop(self) -> None:
@@ -128,11 +145,36 @@ class TradingEngine:
                 result = await self.run_once()
                 results.append(result)
                 logger.info("Cycle %d: %s", cycle, result.get("action", "unknown"))
-                update_bot_status(
-                    stream_name=self.stream_name,
-                    cycle_count=self._cycle_count,
-                    last_cycle_at=datetime.now(timezone.utc).isoformat(),
-                )
+                # Refresh account data for the dashboard
+                try:
+                    acct = await self._broker.get_account_summary()
+                    dd_pct = 0.0
+                    if self._drawdown:
+                        self._drawdown.update(acct.equity)
+                        dd_pct = self._drawdown.drawdown_pct
+                    update_bot_status(
+                        stream_name=self.stream_name,
+                        running=True,
+                        pair=self.instrument,
+                        cycle_count=self._cycle_count,
+                        last_cycle_at=datetime.now(timezone.utc).isoformat(),
+                        equity=acct.equity,
+                        balance=acct.balance,
+                        peak_equity=self._drawdown.peak if self._drawdown else None,
+                        drawdown_pct=round(dd_pct, 2),
+                        circuit_breaker_active=(
+                            self._drawdown.circuit_breaker_active
+                            if self._drawdown else False
+                        ),
+                        open_positions=acct.open_position_count,
+                        last_signal_check=datetime.now(timezone.utc).isoformat(),
+                    )
+                except Exception:
+                    update_bot_status(
+                        stream_name=self.stream_name,
+                        cycle_count=self._cycle_count,
+                        last_cycle_at=datetime.now(timezone.utc).isoformat(),
+                    )
             except Exception as exc:
                 logger.error("Cycle %d error: %s", cycle, exc)
                 results.append({"action": "error", "reason": str(exc)})
@@ -146,6 +188,7 @@ class TradingEngine:
                     break
                 await asyncio.sleep(1)
 
+        update_bot_status(stream_name=self.stream_name, running=False)
         return results
 
     # ── Single cycle ─────────────────────────────────────────────────────

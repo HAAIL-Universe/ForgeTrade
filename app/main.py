@@ -93,11 +93,21 @@ def _run_cli() -> None:
     manager.build_engines()
 
     # Inject broker into routers for /positions endpoint
-    from app.api.routers import configure_routers
+    from app.api.routers import configure_routers, update_bot_status
     from app.repos.trade_repo import TradeRepo
 
     trade_repo = TradeRepo(config.db_path)
     configure_routers(trade_repo=trade_repo, broker=broker)
+
+    # Push initial status so the dashboard shows streams immediately
+    for sname in manager.stream_names:
+        eng = manager.engines[sname]
+        update_bot_status(
+            stream_name=sname,
+            mode=args.mode,
+            pair=eng.instrument,
+            running=False,
+        )
 
     import signal
 
