@@ -136,12 +136,12 @@ class TestScalpSignals:
         assert result.direction == "buy"
         assert "buy" in result.reason.lower()
 
-    def test_scalp_blocked_counter_trend(self):
-        """No buy signal when trend is bearish, even if M1 shows buy pattern."""
+    def test_scalp_counter_trend_buy_in_bearish(self):
+        """Counter-trend buy allowed when strong reversal pattern in bearish trend."""
         trend = TrendState(
             direction="bearish", ema_fast_value=2040, ema_slow_value=2050, slope=-10,
         )
-        # Create bullish pattern at pullback level
+        # Create bullish engulfing pattern (strong reversal)
         prices = []
         for i in range(12):
             base = 2038 + i * 0.5
@@ -152,8 +152,10 @@ class TestScalpSignals:
         s5 = _make_candles([(2045.0, 2045.3, 2044.9, 2045.2)])
 
         result = evaluate_scalp_entry(candles_m1, s5, trend)
-        # Should be None because we're trying to buy in a bearish trend
-        assert result is None
+        # Counter-trend buy allowed with strong reversal (bullish engulfing)
+        assert result is not None
+        assert result.direction == "buy"
+        assert "Counter-trend" in result.reason
 
     def test_scalp_flat_trend_returns_none(self):
         """No signal when trend is flat."""

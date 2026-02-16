@@ -153,14 +153,13 @@ def evaluate_scalp_entry(
 ) -> Optional[ScalpEntrySignal]:
     """Evaluate whether conditions are met for a scalp entry.
 
-    Rules:
-        1. Trend direction must not be flat.
-        2. Price must have pulled back to EMA(9) on M1.
-        3. A bullish/bearish confirmation candle on M1 or S5.
-        4. Only enters WITH the trend (no counter-trend trades).
+    Supports both with-trend and counter-trend entries:
+        - **With trend**: price near EMA + any confirmation candle.
+        - **Counter-trend**: requires a strong reversal pattern
+          (engulfing, hammer/star, pin bar) — momentum alone is not enough.
 
     Args:
-        candles_m1: M1 candle history, oldest-first.  Need ≥ pullback_ema_period + 2.
+        candles_m1: M1 candle history, oldest-first.  Need >= pullback_ema_period + 2.
         candles_s5: S5 candle history, oldest-first.
         trend: The higher-timeframe TrendState.
         pullback_ema_period: EMA period for pullback detection on M1.
@@ -174,7 +173,7 @@ def evaluate_scalp_entry(
     if len(candles_m1) < pullback_ema_period + 2:
         return None
 
-    # Calculate M1 EMA for pullback detection
+    # Calculate M1 EMA for proximity checks
     ema_values = calculate_ema(candles_m1, pullback_ema_period)
     if not ema_values:
         return None
@@ -182,51 +181,84 @@ def evaluate_scalp_entry(
     ema_current = ema_values[-1]
     last_close = candles_m1[-1].close
 
-    if trend.direction == "bullish":
-        # Price should be near the EMA — either pulled back to it or
-        # slightly above.  For gold scalps the zone is generous.
-        # "Near" = within 0.6% of EMA
-        pullback_threshold = ema_current * 1.006
-        if last_close > pullback_threshold:
-            return None  # Price has run too far from EMA
-
-        # Check for bullish confirmation
-        confirmed, pattern = _has_buy_confirmation(candles_m1)
+    # ── Helper: check confirmation on M1, fallback to S5
+    def _check_confirm(check_fn):
+        confirmed, pattern = check_fn(candles_m1)
         if not confirmed and len(candles_s5) >= 2:
-            confirmed, pattern = _has_buy_confirmation(candles_s5)
+            confirmed, pattern = check_fn(candles_s5)
             if confirmed:
                 pattern += " (S5)"
+        return confirmed, pattern
 
-        if not confirmed:
-            return None
+    # ── Helper: check for STRONG reversal only (no momentum/single candle)
+    def _has_strong_buy(candles):
+        if len(candles) < 2:
+            return False, ""
+        prev, curr = candles[-2], candles[-1]
+        if _is_bullish_engulfing(prev, curr):
+            return True, "bullish engulfing"
+        if _is_hammer(curr):
+            return True, "hammer"
+        if _is_bullish_pin_bar(curr):
+            return True, "bullish pin bar"
+        return False, ""
 
-        return ScalpEntrySignal(
-            direction="buy",
-            entry_price=candles_m1[-1].close,
-            reason=f"Trend-scalp buy: {pattern} at M1 EMA({pullback_ema_period}) pullback",
-        )
+    def _has_strong_sell(candles):
+        if len(candles) < 2:
+            return False, ""
+        prev, curr = candles[-2], candles[-1]
+        if _is_bearish_engulfing(prev, curr):
+            return True, "bearish engulfing"
+        if _is_shooting_star(curr):
+            return True, "shooting star"
+        if _is_bearish_pin_bar(curr):
+            return True, "bearish pin bar"
+        return False, ""
+
+    # ── WITH-TREND entry ──
+    if trend.direction == "bullish":
+        # Price should be near the EMA (within 0.6%)
+        pullback_threshold = ema_current * 1.006
+        if last_close <= pullback_threshold:
+            confirmed, pattern = _check_confirm(_has_buy_confirmation)
+            if confirmed:
+                return ScalpEntrySignal(
+                    direction="buy",
+                    entry_price=last_close,
+                    reason=f"Trend-scalp buy: {pattern} at M1 EMA({pullback_ema_period}) pullback",
+                )
 
     elif trend.direction == "bearish":
-        # Price should be near the EMA — either pulled back up or
-        # slightly below.
         pullback_threshold = ema_current * 0.994
-        if last_close < pullback_threshold:
-            return None  # Price has run too far from EMA
-
-        # Check for bearish confirmation
-        confirmed, pattern = _has_sell_confirmation(candles_m1)
-        if not confirmed and len(candles_s5) >= 2:
-            confirmed, pattern = _has_sell_confirmation(candles_s5)
+        if last_close >= pullback_threshold:
+            confirmed, pattern = _check_confirm(_has_sell_confirmation)
             if confirmed:
-                pattern += " (S5)"
+                return ScalpEntrySignal(
+                    direction="sell",
+                    entry_price=last_close,
+                    reason=f"Trend-scalp sell: {pattern} at M1 EMA({pullback_ema_period}) pullback",
+                )
 
-        if not confirmed:
-            return None
+    # ── COUNTER-TREND entry (reversal at extremes) ──
+    # Only allowed with a strong reversal pattern — no momentum/single candle
+    if trend.direction == "bullish":
+        # Look for sell reversal (price extended above EMA, showing weakness)
+        confirmed, pattern = _check_confirm(_has_strong_sell)
+        if confirmed:
+            return ScalpEntrySignal(
+                direction="sell",
+                entry_price=last_close,
+                reason=f"Counter-trend sell: {pattern} (reversal against bullish bias)",
+            )
 
-        return ScalpEntrySignal(
-            direction="sell",
-            entry_price=candles_m1[-1].close,
-            reason=f"Trend-scalp sell: {pattern} at M1 EMA({pullback_ema_period}) pullback",
-        )
+    elif trend.direction == "bearish":
+        # Look for buy reversal (price extended below EMA, showing strength)
+        confirmed, pattern = _check_confirm(_has_strong_buy)
+        if confirmed:
+            return ScalpEntrySignal(
+                direction="buy",
+                entry_price=last_close,
+                reason=f"Counter-trend buy: {pattern} (reversal against bearish bias)",
+            )
 
     return None

@@ -170,7 +170,7 @@ class TrendScalpStrategy:
                 return None
         checks["spread_acceptable"] = True
 
-        # 4 ── Evaluate scalp entry
+        # 4 ── Evaluate scalp entry (with-trend or counter-trend)
         entry_signal = evaluate_scalp_entry(m1_candles, s5_candles, trend)
         if entry_signal is None:
             # Determine which sub-check failed for insight
@@ -181,17 +181,11 @@ class TrendScalpStrategy:
                 price = m1_candles[-1].close
                 self.last_insight["ema9"] = round(ema_cur, 2)
                 self.last_insight["price_vs_ema"] = round(price - ema_cur, 2)
-                # Check if it was pullback or confirmation that failed
-                if trend.direction == "bullish" and price <= ema_cur * 1.006:
-                    checks["pullback_to_ema"] = True
-                    self.last_insight["result"] = "no_confirmation_pattern"
-                elif trend.direction == "bearish" and price >= ema_cur * 0.994:
-                    checks["pullback_to_ema"] = True
-                    self.last_insight["result"] = "no_confirmation_pattern"
-                else:
-                    self.last_insight["result"] = "no_pullback"
+                # With counter-trend now allowed, if we still got None it
+                # means neither with-trend pullback nor reversal pattern fired
+                self.last_insight["result"] = "no_confirmation_pattern"
             else:
-                self.last_insight["result"] = "no_pullback"
+                self.last_insight["result"] = "no_data"
             return None
 
         checks["pullback_to_ema"] = True

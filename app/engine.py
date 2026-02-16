@@ -23,6 +23,21 @@ from app.strategy.session_filter import is_in_session
 logger = logging.getLogger("forgetrade")
 
 
+class _EngineConfig:
+    """Lightweight wrapper that overrides ``trade_pair`` per-stream.
+
+    Delegates every attribute to the underlying global ``Config``,
+    except ``trade_pair`` which is set to the stream's instrument.
+    """
+
+    def __init__(self, config: Config, instrument: str) -> None:
+        object.__setattr__(self, "_inner", config)
+        object.__setattr__(self, "trade_pair", instrument)
+
+    def __getattr__(self, name: str):
+        return getattr(object.__getattribute__(self, "_inner"), name)
+
+
 class TradingEngine:
     """Orchestrates one evaluation-and-execution cycle per call.
 
@@ -254,7 +269,9 @@ class TradingEngine:
         if self._strategy is None:
             return {"action": "skipped", "reason": "no_strategy"}
 
-        result = await self._strategy.evaluate(self._broker, self._config)
+        # Wrap config so strategy sees this stream's instrument as trade_pair
+        engine_config = _EngineConfig(self._config, self.instrument)
+        result = await self._strategy.evaluate(self._broker, engine_config)
 
         # Push strategy insight data to the dashboard (if strategy supports it)
         if hasattr(self._strategy, "last_insight") and isinstance(self._strategy.last_insight, dict):
