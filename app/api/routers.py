@@ -39,6 +39,7 @@ _stream_statuses: dict[str, dict] = {
 _trade_repo = None   # Set via configure_routers()
 _broker = None       # Set via configure_routers()
 _pending_signal = None  # Updated by engine after evaluate_signal()
+_strategy_insight: dict = {}  # Updated by engine each cycle
 
 
 def configure_routers(
@@ -76,6 +77,11 @@ def update_pending_signal(signal_data: Optional[dict]) -> None:
     """Store the last evaluated signal for the watchlist endpoint."""
     global _pending_signal  # noqa: PLW0603
     _pending_signal = signal_data
+
+
+def update_strategy_insight(stream_name: str, insight: dict) -> None:
+    """Store per-cycle strategy analysis for the dashboard."""
+    _strategy_insight[stream_name] = insight
 
 
 # ── Endpoints ────────────────────────────────────────────────────────────
@@ -137,6 +143,12 @@ async def get_positions():
 async def get_pending_signals():
     """Return the last evaluated signal (watchlist)."""
     return {"signal": _pending_signal}
+
+
+@router.get("/strategy/insight")
+async def get_strategy_insight():
+    """Return live strategy analysis with entry checklist."""
+    return {"insights": _strategy_insight}
 
 
 @router.get("/trades/closed")

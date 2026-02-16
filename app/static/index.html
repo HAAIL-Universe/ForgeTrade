@@ -137,6 +137,38 @@
   .dot-off { background: #484f58; }
   .dot-error { background: #f85149; }
 
+  .check-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #21262d; }
+  .check-item:last-child { border-bottom: none; }
+  .check-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+  .check-pass { color: #3fb950; }
+  .check-fail { color: #f85149; }
+  .check-wait { color: #d29922; }
+  .check-label { color: #8b949e; min-width: 140px; }
+  .check-detail { color: #c9d1d9; font-size: 13px; }
+
+  .insight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  @media (max-width: 768px) { .insight-grid { grid-template-columns: 1fr; } }
+
+  .zone-chip { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; margin: 2px 3px; }
+  .zone-support { background: #238636aa; color: #3fb950; border: 1px solid #238636; }
+  .zone-resistance { background: #da363344; color: #f85149; border: 1px solid #da3633; }
+  .zone-nearest { box-shadow: 0 0 6px #58a6ff66; border: 1px solid #58a6ff; }
+
+  .proximity-bar-container { width: 100%; height: 6px; background: #21262d; border-radius: 3px; margin-top: 4px; }
+  .proximity-bar { height: 100%; border-radius: 3px; transition: width 0.3s ease; }
+  .prox-far { background: #484f58; }
+  .prox-mid { background: #d29922; }
+  .prox-close { background: #3fb950; }
+
+  .insight-stat { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #21262d; }
+  .insight-stat:last-child { border-bottom: none; }
+  .insight-stat-label { color: #8b949e; font-size: 13px; }
+  .insight-stat-value { font-size: 13px; }
+
+  .readiness-bar-container { width: 100%; height: 10px; background: #21262d; border-radius: 5px; margin-top: 8px; overflow: hidden; }
+  .readiness-bar { height: 100%; border-radius: 5px; transition: width 0.5s ease; background: linear-gradient(90deg, #f85149, #d29922, #3fb950); }
+  .readiness-pct { text-align: center; font-size: 18px; font-weight: 700; margin-top: 4px; }
+
   /* ── Footer ─────────────────────────────────────────────── */
   .footer {
     text-align: center;
@@ -212,6 +244,96 @@
       <tr class="empty-row"><td colspan="5">No pending signals</td></tr>
     </tbody>
   </table>
+</div>
+
+<!-- ── Strategy Insight ───────────────────────────────────── -->
+<div class="card">
+  <div class="card-title">
+    <span>Strategy Insight</span>
+    <span class="count mono" id="insight-strategy">—</span>
+  </div>
+
+  <!-- Readiness -->
+  <div style="padding: 0 4px 8px;">
+    <div style="display:flex; justify-content:space-between; align-items:center;">
+      <span class="metric-label" style="margin:0;">Entry Readiness</span>
+      <span class="readiness-pct mono" id="readiness-pct">0%</span>
+    </div>
+    <div class="readiness-bar-container">
+      <div class="readiness-bar" id="readiness-bar" style="width:0%"></div>
+    </div>
+  </div>
+
+  <!-- Checklist + Details side by side -->
+  <div class="insight-grid">
+    <!-- LEFT: Checklist -->
+    <div>
+      <div class="check-item" id="chk-circuit">
+        <span class="check-icon check-wait">◯</span>
+        <span class="check-label">Circuit Breaker</span>
+        <span class="check-detail mono" id="chk-circuit-detail">—</span>
+      </div>
+      <div class="check-item" id="chk-session">
+        <span class="check-icon check-wait">◯</span>
+        <span class="check-label">Session Window</span>
+        <span class="check-detail mono" id="chk-session-detail">—</span>
+      </div>
+      <div class="check-item" id="chk-zones">
+        <span class="check-icon check-wait">◯</span>
+        <span class="check-label">S/R Zones</span>
+        <span class="check-detail mono" id="chk-zones-detail">—</span>
+      </div>
+      <div class="check-item" id="chk-proximity">
+        <span class="check-icon check-wait">◯</span>
+        <span class="check-label">Zone Proximity</span>
+        <span class="check-detail mono" id="chk-proximity-detail">—</span>
+      </div>
+      <div class="check-item" id="chk-wick">
+        <span class="check-icon check-wait">◯</span>
+        <span class="check-label">Rejection Wick</span>
+        <span class="check-detail mono" id="chk-wick-detail">—</span>
+      </div>
+      <div class="check-item" id="chk-risk">
+        <span class="check-icon check-wait">◯</span>
+        <span class="check-label">Risk / SL+TP</span>
+        <span class="check-detail mono" id="chk-risk-detail">—</span>
+      </div>
+    </div>
+
+    <!-- RIGHT: Zone Map + Stats -->
+    <div>
+      <div style="color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Zone Map</div>
+      <div id="zone-chips" style="min-height:28px;">—</div>
+      <div style="margin-top:12px; color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Nearest Zone</div>
+      <div class="insight-stat">
+        <span class="insight-stat-label">Level</span>
+        <span class="insight-stat-value mono" id="nz-price">—</span>
+      </div>
+      <div class="insight-stat">
+        <span class="insight-stat-label">Type</span>
+        <span class="insight-stat-value mono" id="nz-type">—</span>
+      </div>
+      <div class="insight-stat">
+        <span class="insight-stat-label">Distance</span>
+        <span class="insight-stat-value mono" id="nz-distance">—</span>
+      </div>
+      <div class="proximity-bar-container"><div class="proximity-bar prox-far" id="nz-bar" style="width:0%"></div></div>
+      <div style="margin-top:12px;">
+        <div class="insight-stat">
+          <span class="insight-stat-label">Price</span>
+          <span class="insight-stat-value mono" id="ins-price">—</span>
+        </div>
+        <div class="insight-stat">
+          <span class="insight-stat-label">ATR (Daily)</span>
+          <span class="insight-stat-value mono" id="ins-atr">—</span>
+        </div>
+        <div class="insight-stat">
+          <span class="insight-stat-label">Last H4</span>
+          <span class="insight-stat-value mono" id="ins-h4">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <!-- ── Closed Trades ──────────────────────────────────────── -->
@@ -464,6 +586,137 @@
     tbody.innerHTML = html;
   }
 
+  // ── Strategy Insight ──────────────────────────────────────
+
+  function setCheck(id, pass, detail) {
+    var icon = $(id).querySelector('.check-icon');
+    var detailEl = $(id + '-detail');
+    if (pass === true) {
+      icon.textContent = '✓';
+      icon.className = 'check-icon check-pass';
+    } else if (pass === false) {
+      icon.textContent = '✗';
+      icon.className = 'check-icon check-fail';
+    } else {
+      icon.textContent = '◯';
+      icon.className = 'check-icon check-wait';
+    }
+    if (detailEl) detailEl.textContent = detail || '—';
+  }
+
+  function updateInsight(data) {
+    var insights = data.insights || {};
+    var keys = Object.keys(insights);
+    if (keys.length === 0) {
+      $('insight-strategy').textContent = 'Waiting...';
+      $('readiness-pct').textContent = '0%';
+      $('readiness-bar').style.width = '0%';
+      return;
+    }
+
+    // Take first stream's insight
+    var ins = insights[keys[0]];
+    var checks = ins.checks || {};
+
+    $('insight-strategy').textContent = (ins.strategy || '—').toUpperCase() + ' · ' + (ins.pair || '').replace('_', '/');
+
+    // Update each checklist item
+    var sessionHours = '07:00–21:00 UTC';
+    setCheck('chk-circuit', checks.circuit_breaker_clear,
+      checks.circuit_breaker_clear ? 'Clear' : 'ACTIVE — trading halted');
+    setCheck('chk-session', checks.in_session,
+      checks.in_session ? 'In session (' + sessionHours + ')' : 'Outside hours');
+
+    var zoneDetail = '—';
+    if (ins.zones) {
+      zoneDetail = ins.zones.total + ' zones (' + ins.zones.support.length + 'S / ' + ins.zones.resistance.length + 'R)';
+    }
+    setCheck('chk-zones', checks.zones_detected, zoneDetail);
+
+    var proxDetail = '—';
+    if (ins.nearest_zone) {
+      proxDetail = ins.nearest_zone.distance_pips + ' pips to ' + ins.nearest_zone.type;
+    }
+    setCheck('chk-proximity', checks.zone_proximity, proxDetail);
+
+    var wickDetail = '—';
+    if (ins.latest_h4) {
+      var h4 = ins.latest_h4;
+      var parts = [];
+      if (h4.buy_rejection_wick) parts.push('Bull wick ✓');
+      if (h4.sell_rejection_wick) parts.push('Bear wick ✓');
+      if (parts.length === 0) parts.push('No rejection');
+      if (h4.zones_touched > 0) parts.push(h4.zones_touched + ' zone(s) touched');
+      else parts.push('No zone touch');
+      wickDetail = parts.join(' · ');
+    }
+    setCheck('chk-wick', checks.rejection_wick, wickDetail);
+
+    var riskDetail = '—';
+    if (ins.signal) {
+      riskDetail = ins.signal.direction.toUpperCase() + ' @ ' + ins.signal.entry +
+        ' SL:' + ins.signal.sl + ' TP:' + ins.signal.tp;
+    }
+    setCheck('chk-risk', checks.risk_calculated, riskDetail);
+
+    // Readiness percentage
+    var checkKeys = ['circuit_breaker_clear', 'in_session', 'zones_detected', 'zone_proximity', 'rejection_wick', 'risk_calculated'];
+    var passed = 0;
+    for (var i = 0; i < checkKeys.length; i++) {
+      if (checks[checkKeys[i]] === true) passed++;
+    }
+    var pct = Math.round((passed / checkKeys.length) * 100);
+    $('readiness-pct').textContent = pct + '%';
+    $('readiness-pct').className = 'readiness-pct mono ' + (pct >= 100 ? 'check-pass' : pct >= 50 ? 'check-wait' : 'check-fail');
+    $('readiness-bar').style.width = pct + '%';
+
+    // Zone chips
+    var chipsEl = $('zone-chips');
+    if (ins.zones && (ins.zones.support.length > 0 || ins.zones.resistance.length > 0)) {
+      var chipHtml = '';
+      for (var si = 0; si < ins.zones.support.length; si++) {
+        var sz = ins.zones.support[si];
+        var isNearest = ins.nearest_zone && Math.abs(sz.price - ins.nearest_zone.price) < 0.00001;
+        chipHtml += '<span class="zone-chip zone-support ' + (isNearest ? 'zone-nearest' : '') + '">' +
+          'S ' + sz.price.toFixed(5) + ' (' + sz.touches + ')</span>';
+      }
+      for (var ri = 0; ri < ins.zones.resistance.length; ri++) {
+        var rz = ins.zones.resistance[ri];
+        var isNearestR = ins.nearest_zone && Math.abs(rz.price - ins.nearest_zone.price) < 0.00001;
+        chipHtml += '<span class="zone-chip zone-resistance ' + (isNearestR ? 'zone-nearest' : '') + '">' +
+          'R ' + rz.price.toFixed(5) + ' (' + rz.touches + ')</span>';
+      }
+      chipsEl.innerHTML = chipHtml;
+    } else {
+      chipsEl.textContent = 'No zones';
+    }
+
+    // Nearest zone stats
+    if (ins.nearest_zone) {
+      $('nz-price').textContent = ins.nearest_zone.price.toFixed(5);
+      $('nz-type').textContent = ins.nearest_zone.type.toUpperCase();
+      $('nz-distance').textContent = ins.nearest_zone.distance_pips + ' pips';
+      // Proximity bar: 0 pips = 100%, 50+ pips = 0%
+      var proxPct = Math.max(0, Math.min(100, (1 - ins.nearest_zone.distance_pips / 50) * 100));
+      $('nz-bar').style.width = proxPct + '%';
+      $('nz-bar').className = 'proximity-bar ' + (proxPct > 60 ? 'prox-close' : proxPct > 30 ? 'prox-mid' : 'prox-far');
+    } else {
+      $('nz-price').textContent = '—';
+      $('nz-type').textContent = '—';
+      $('nz-distance').textContent = '—';
+      $('nz-bar').style.width = '0%';
+    }
+
+    // Stats
+    $('ins-price').textContent = ins.current_price ? ins.current_price.toFixed(5) : '—';
+    $('ins-atr').textContent = ins.atr ? ins.atr.toFixed(5) : '—';
+    if (ins.latest_h4) {
+      $('ins-h4').textContent = 'O:' + ins.latest_h4.open.toFixed(5) + ' H:' + ins.latest_h4.high.toFixed(5) + ' L:' + ins.latest_h4.low.toFixed(5) + ' C:' + ins.latest_h4.close.toFixed(5);
+    } else {
+      $('ins-h4').textContent = '—';
+    }
+  }
+
   // ── Poll Loop ────────────────────────────────────────────
 
   function poll() {
@@ -471,12 +724,14 @@
       fetchJSON('/status'),
       fetchJSON('/positions'),
       fetchJSON('/signals/pending'),
-      fetchJSON('/trades/closed?limit=20')
+      fetchJSON('/trades/closed?limit=20'),
+      fetchJSON('/strategy/insight')
     ]).then(function(results) {
       updateStatus(results[0]);
       updatePositions(results[1]);
       updateWatchlist(results[2]);
       updateClosedTrades(results[3]);
+      updateInsight(results[4]);
       $('last-refresh').textContent = new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'UTC'}) + ' UTC';
     }).catch(function(err) {
       console.error('Poll error:', err);

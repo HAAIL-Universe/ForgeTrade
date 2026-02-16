@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.api.routers import update_bot_status, update_pending_signal
+from app.api.routers import update_bot_status, update_pending_signal, update_strategy_insight
 from app.broker.models import OrderRequest
 from app.broker.oanda_client import OandaClient
 from app.config import Config
@@ -212,6 +212,20 @@ class TradingEngine:
 
         # 1 ── Circuit breaker
         if self._drawdown and self._drawdown.circuit_breaker_active:
+            update_strategy_insight(self.stream_name, {
+                "strategy": "—",
+                "pair": self.instrument,
+                "checks": {
+                    "circuit_breaker_clear": False,
+                    "in_session": False,
+                    "zones_detected": False,
+                    "zone_proximity": False,
+                    "rejection_wick": False,
+                    "risk_calculated": False,
+                },
+                "result": "circuit_breaker",
+                "evaluated_at": utc_now.isoformat(),
+            })
             return {"action": "halted", "reason": "circuit_breaker"}
 
         # 2 ── Session filter
@@ -220,6 +234,20 @@ class TradingEngine:
             self._session_start,
             self._session_end,
         ):
+            update_strategy_insight(self.stream_name, {
+                "strategy": "—",
+                "pair": self.instrument,
+                "checks": {
+                    "circuit_breaker_clear": True,
+                    "in_session": False,
+                    "zones_detected": False,
+                    "zone_proximity": False,
+                    "rejection_wick": False,
+                    "risk_calculated": False,
+                },
+                "result": "outside_session",
+                "evaluated_at": utc_now.isoformat(),
+            })
             return {"action": "skipped", "reason": "outside_session"}
 
         # 3 ── Strategy evaluation (delegates to pluggable strategy)
@@ -227,6 +255,17 @@ class TradingEngine:
             return {"action": "skipped", "reason": "no_strategy"}
 
         result = await self._strategy.evaluate(self._broker, self._config)
+
+        # Push strategy insight data to the dashboard (if strategy supports it)
+        if hasattr(self._strategy, "last_insight") and isinstance(self._strategy.last_insight, dict):
+            insight = self._strategy.last_insight.copy()
+            insight["evaluated_at"] = utc_now.isoformat()
+            # Add engine-level checks
+            insight.setdefault("checks", {})
+            insight["checks"]["in_session"] = True  # We got past check 2
+            insight["checks"]["circuit_breaker_clear"] = True  # Got past check 1
+            update_strategy_insight(self.stream_name, insight)
+
         if result is None:
             update_pending_signal({
                 "pair": self.instrument,
