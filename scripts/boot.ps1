@@ -83,6 +83,7 @@ Write-Host "  +-------------------------------------------+" -ForegroundColor Cy
 Write-Host ""
 Write-Host "  Python:  $python" -ForegroundColor DarkGray
 Write-Host "  Mode:    $Mode" -ForegroundColor DarkGray
+Write-Host "  API:     http://localhost:$Port" -ForegroundColor DarkGray
 Write-Host ""
 
 # -- Launch --------------------------------------------------------------------
@@ -92,10 +93,14 @@ try {
     switch ($Mode) {
         "paper" {
             Write-Host "[boot] Starting in PAPER mode (practice API)..." -ForegroundColor Green
+            Write-Host "[boot] Dashboard: http://localhost:$Port" -ForegroundColor Cyan
+            Start-Process "http://localhost:$Port"
             & $python -m app.main --mode paper
         }
         "live" {
             Write-Host "[boot] Starting in LIVE mode -- real money at risk!" -ForegroundColor Red
+            Write-Host "[boot] Dashboard: http://localhost:$Port" -ForegroundColor Cyan
+            Start-Process "http://localhost:$Port"
             & $python -m app.main --mode live
         }
         "backtest" {

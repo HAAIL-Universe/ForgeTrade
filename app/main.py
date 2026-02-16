@@ -113,12 +113,34 @@ def _run_cli() -> None:
         asyncio.run(_run_engine_manager(manager, args.mode))
 
 
-async def _run_engine_manager(manager, mode: str) -> None:
-    """Initialise and run all trading streams."""
+async def _run_engine_manager(manager, mode: str, port: int = 8080) -> None:
+    """Start the API server and all trading streams concurrently."""
+    import uvicorn
+
     logger.info("Starting ForgeTrade in %s mode with %d stream(s).",
                 mode, len(manager.stream_names))
-    results = await manager.run_all()
-    logger.info("ForgeTrade stopped. Results: %s", list(results.keys()))
+
+    uvi_config = uvicorn.Config(
+        app,
+        host="0.0.0.0",
+        port=port,
+        log_level="info",
+    )
+    server = uvicorn.Server(uvi_config)
+
+    async def _run_server():
+        await server.serve()
+
+    async def _run_engines():
+        await manager.run_all()
+
+    logger.info("Dashboard available at http://localhost:%d", port)
+    results = await asyncio.gather(
+        _run_server(),
+        _run_engines(),
+        return_exceptions=True,
+    )
+    logger.info("ForgeTrade stopped. Results: %s", results)
 
 
 def _run_backtest(config, broker, start_date, end_date) -> None:
