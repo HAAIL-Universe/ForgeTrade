@@ -153,6 +153,11 @@
   .dot-off { background: #484f58; }
   .dot-error { background: #f85149; }
 
+  .stream-row { cursor: pointer; transition: background 0.1s; }
+  .stream-row:hover { background: #1c2128; }
+  .stream-row.stream-selected { background: #1f6feb1a; border-left: 3px solid #58a6ff; }
+  .stream-category { font-size: 10px; color: #6e7681; text-transform: uppercase; letter-spacing: 0.5px; display: block; margin-top: 1px; }
+
   .check-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #21262d; }
   .check-item:last-child { border-bottom: none; }
   .check-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
@@ -367,7 +372,7 @@
   <div class="card-body">
   <table>
     <thead>
-      <tr><th>Name</th><th>Pair</th><th>Cycle</th><th>Status</th><th>Last Signal</th></tr>
+      <tr><th>Name</th><th>Instrument</th><th>Cycle</th><th>Status</th><th>Last Signal</th></tr>
     </thead>
     <tbody id="streams-body">
       <tr class="empty-row"><td colspan="5">No stream data</td></tr>
@@ -471,6 +476,29 @@ function toggleCard(id) {
 })();
 
 // ── Global: control actions (accessed by onclick) ──────────
+// ── Global: instrument display names ───────────────────
+var INSTRUMENT_DISPLAY = {
+  'XAU_USD': { name: 'Gold', category: 'Commodities' },
+  'XAG_USD': { name: 'Silver', category: 'Commodities' },
+  'XPT_USD': { name: 'Platinum', category: 'Commodities' },
+  'WTICO_USD': { name: 'WTI Oil', category: 'Commodities' },
+  'NATGAS_USD': { name: 'Natural Gas', category: 'Commodities' },
+};
+function instrumentLabel(inst) {
+  var info = INSTRUMENT_DISPLAY[inst];
+  if (info) return info.name;
+  return (inst || '').replace('_', '/');
+}
+function instrumentCategory(inst) {
+  var info = INSTRUMENT_DISPLAY[inst];
+  return info ? info.category : 'Forex';
+}
+
+// ── Global: insight tab selection (must be global for onclick) ──
+function selectInsightTab(streamName) {
+  if (typeof window._setInsightTab === 'function') window._setInsightTab(streamName);
+}
+
 function pauseAll() {
   fetch('/control/pause', {method:'POST'}).then(function() {
     document.getElementById('btn-pause').style.display = 'none';
@@ -641,10 +669,13 @@ function saveSettings() {
       var st = s.running ? 'active' : 'off';
       var dotClass = st === 'active' ? 'dot-active' : 'dot-off';
       var lastSig = s.last_signal_time ? fmtTime(s.last_signal_time) : '—';
+      var dispName = instrumentLabel(pair);
+      var cat = instrumentCategory(pair);
+      var isSelected = (_activeInsightTab === keys[j]) ? ' stream-selected' : '';
       html +=
-        '<tr>' +
+        '<tr class="stream-row' + isSelected + '" onclick="selectInsightTab(\'' + keys[j] + '\')">' +
         '<td>' + sName + '</td>' +
-        '<td class="mono">' + pair.replace('_', '/') + '</td>' +
+        '<td class="mono">' + dispName + '<span class="stream-category">' + cat + '</span></td>' +
         '<td class="mono">' + cycle + '</td>' +
         '<td><span class="dot ' + dotClass + '"></span>' + st + '</td>' +
         '<td class="mono">' + lastSig + '</td>' +
@@ -779,7 +810,7 @@ function saveSettings() {
       var isScalp = sn.indexOf('scalp') >= 0;
       var dotClass = isScalp ? 'tab-dot-scalp' : 'tab-dot-swing';
       var pair = _insightData[sn].pair || '';
-      var label = pair.replace('_', '/') || sn;
+      var label = instrumentLabel(pair) || sn;
       tabsHtml += '<div class="stream-tab' + (_activeInsightTab === sn || (!_activeInsightTab && ti === 0) ? ' active' : '') +
         '" data-stream="' + sn + '" onclick="selectInsightTab(\'' + sn + '\')">' +
         '<span class="tab-dot ' + dotClass + '"></span>' + label + '</div>';
@@ -794,15 +825,23 @@ function saveSettings() {
     renderInsightForStream(_activeInsightTab);
   }
 
-  function selectInsightTab(streamName) {
+  // selectInsightTab implementation (exposed as window._setInsightTab)
+  window._setInsightTab = function(streamName) {
     _activeInsightTab = streamName;
     // Re-render tabs active state
     var tabs = document.querySelectorAll('.stream-tab');
     for (var t = 0; t < tabs.length; t++) {
       tabs[t].classList.toggle('active', tabs[t].getAttribute('data-stream') === streamName);
     }
+    // Re-highlight selected stream row
+    var rows = document.querySelectorAll('.stream-row');
+    for (var r = 0; r < rows.length; r++) {
+      rows[r].classList.remove('stream-selected');
+    }
+    var selRow = document.querySelector('.stream-row[onclick*="' + streamName + '"]');
+    if (selRow) selRow.classList.add('stream-selected');
     renderInsightForStream(streamName);
-  }
+  };
 
   function renderInsightForStream(streamName) {
     var ins = _insightData[streamName];
@@ -810,7 +849,7 @@ function saveSettings() {
     var checks = ins.checks || {};
     var isScalp = (ins.strategy || '').toLowerCase().indexOf('scalp') >= 0;
 
-    $('insight-strategy').textContent = (ins.strategy || '—').toUpperCase() + ' · ' + (ins.pair || '').replace('_', '/');
+    $('insight-strategy').textContent = (ins.strategy || '—').toUpperCase() + ' · ' + instrumentLabel(ins.pair || '');
 
     var checklistEl = $('insight-checklist');
     var detailEl = $('insight-detail-panel');
@@ -899,6 +938,20 @@ function saveSettings() {
     } else {
       html += '<div style="min-height:28px;">No zones</div>';
     }
+
+    // Nearest Zone section (distance / proximity bar)
+    html += '<div style="margin-top:12px; color:#8b949e; font-size:12px; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.5px;">Nearest Zone</div>';
+    if (ins.nearest_zone) {
+      html += '<div class="insight-stat"><span class="insight-stat-label">Level</span><span class="insight-stat-value mono">' + ins.nearest_zone.price.toFixed(5) + '</span></div>';
+      html += '<div class="insight-stat"><span class="insight-stat-label">Type</span><span class="insight-stat-value mono">' + ins.nearest_zone.type.toUpperCase() + '</span></div>';
+      html += '<div class="insight-stat"><span class="insight-stat-label">Distance</span><span class="insight-stat-value mono">' + ins.nearest_zone.distance_pips + ' pips</span></div>';
+      var proxPct = Math.max(0, Math.min(100, (1 - ins.nearest_zone.distance_pips / 50) * 100));
+      var proxClass = proxPct > 60 ? 'prox-close' : proxPct > 30 ? 'prox-mid' : 'prox-far';
+      html += '<div class="proximity-bar-container"><div class="proximity-bar ' + proxClass + '" style="width:' + proxPct + '%"></div></div>';
+    } else {
+      html += '<div style="color:#484f58; font-size:13px;">No zones detected</div>';
+    }
+
     // Stats
     html += '<div style="margin-top:12px;"><div class="insight-stat"><span class="insight-stat-label">Price</span><span class="insight-stat-value mono">' +
       (ins.current_price ? ins.current_price.toFixed(5) : '—') + '</span></div>';
