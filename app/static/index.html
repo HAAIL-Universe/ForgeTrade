@@ -52,8 +52,8 @@
     background: #161b22;
     border: 1px solid #30363d;
     border-radius: 6px;
-    padding: 16px;
-    margin-bottom: 16px;
+    margin-bottom: 12px;
+    overflow: hidden;
   }
   .card-title {
     font-size: 12px;
@@ -61,11 +61,27 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #8b949e;
-    margin-bottom: 12px;
     display: flex;
     justify-content: space-between;
     align-items: center;
+    padding: 10px 16px;
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.15s ease;
+    margin: 0;
   }
+  .card-title:hover { background: #1c2128; }
+  .card-title > span:first-child::before {
+    content: '▾';
+    display: inline-block;
+    margin-right: 8px;
+    font-size: 10px;
+    transition: transform 0.2s ease;
+    color: #6e7681;
+  }
+  .card.collapsed .card-title > span:first-child::before { transform: rotate(-90deg); }
+  .card-body { padding: 0 16px 16px; }
+  .card.collapsed .card-body { display: none; }
   .card-title .count { color: #58a6ff; }
 
   /* ── Metrics Bar ────────────────────────────────────────── */
@@ -169,6 +185,42 @@
   .readiness-bar { height: 100%; border-radius: 5px; transition: width 0.5s ease; background: linear-gradient(90deg, #f85149, #d29922, #3fb950); }
   .readiness-pct { text-align: center; font-size: 18px; font-weight: 700; margin-top: 4px; }
 
+  /* ── Settings Panel ─────────────────────────────────────── */
+  .settings-row { display: flex; align-items: center; gap: 12px; padding: 8px 0; border-bottom: 1px solid #21262d; }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-label { color: #8b949e; font-size: 13px; min-width: 180px; }
+  .settings-input {
+    background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9;
+    padding: 6px 10px; font-size: 13px; font-family: inherit; width: 100px; text-align: right;
+  }
+  .settings-input:focus { outline: none; border-color: #58a6ff; box-shadow: 0 0 4px #1f6feb55; }
+  .settings-unit { color: #6e7681; font-size: 12px; min-width: 30px; }
+  .settings-hint { color: #484f58; font-size: 11px; margin-left: auto; }
+  .btn-save {
+    background: #238636; color: #fff; border: none; border-radius: 6px; padding: 8px 20px;
+    font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.15s;
+  }
+  .btn-save:hover { background: #2ea043; }
+  .btn-save:disabled { background: #21262d; color: #484f58; cursor: not-allowed; }
+
+  /* ── Control Buttons ────────────────────────────────────── */
+  .controls-bar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+  .btn-ctrl {
+    border: none; border-radius: 6px; padding: 8px 16px; font-size: 12px;
+    font-weight: 600; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;
+    transition: background 0.15s, box-shadow 0.15s;
+  }
+  .btn-pause { background: #d2992233; color: #d29922; border: 1px solid #d29922; }
+  .btn-pause:hover { background: #d2992255; }
+  .btn-resume { background: #23863633; color: #3fb950; border: 1px solid #238636; }
+  .btn-resume:hover { background: #23863655; }
+  .btn-estop {
+    background: #f8514922; color: #f85149; border: 1px solid #f85149;
+    animation: none; margin-left: auto;
+  }
+  .btn-estop:hover { background: #f8514944; box-shadow: 0 0 12px #f8514966; }
+  .btn-estop.engaged { animation: pulse-red 1.5s ease-in-out infinite; background: #f8514944; }
+
   /* ── Footer ─────────────────────────────────────────────── */
   .footer {
     text-align: center;
@@ -218,11 +270,12 @@
 </div>
 
 <!-- ── Open Positions ─────────────────────────────────────── -->
-<div class="card">
-  <div class="card-title">
+<div class="card" id="card-positions">
+  <div class="card-title" onclick="toggleCard('card-positions')">
     <span>Open Positions</span>
     <span class="count mono" id="pos-count">0 open</span>
   </div>
+  <div class="card-body">
   <table>
     <thead>
       <tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>SL</th><th>TP</th><th>uP&L</th></tr>
@@ -231,11 +284,13 @@
       <tr class="empty-row"><td colspan="7">No open positions</td></tr>
     </tbody>
   </table>
+  </div>
 </div>
 
 <!-- ── Watchlist ───────────────────────────────────────────── -->
-<div class="card">
-  <div class="card-title"><span>Watchlist</span></div>
+<div class="card" id="card-watchlist">
+  <div class="card-title" onclick="toggleCard('card-watchlist')"><span>Watchlist</span></div>
+  <div class="card-body">
   <table>
     <thead>
       <tr><th>Pair</th><th>Dir</th><th>Zone</th><th>Reason</th><th>Status</th></tr>
@@ -244,14 +299,16 @@
       <tr class="empty-row"><td colspan="5">No pending signals</td></tr>
     </tbody>
   </table>
+  </div>
 </div>
 
 <!-- ── Strategy Insight ───────────────────────────────────── -->
-<div class="card">
-  <div class="card-title">
+<div class="card" id="card-insight">
+  <div class="card-title" onclick="toggleCard('card-insight')">
     <span>Strategy Insight</span>
     <span class="count mono" id="insight-strategy">—</span>
   </div>
+  <div class="card-body">
 
   <!-- Readiness -->
   <div style="padding: 0 4px 8px;">
@@ -334,14 +391,16 @@
       </div>
     </div>
   </div>
+  </div>
 </div>
 
 <!-- ── Closed Trades ──────────────────────────────────────── -->
-<div class="card">
-  <div class="card-title">
+<div class="card collapsed" id="card-closed">
+  <div class="card-title" onclick="toggleCard('card-closed')">
     <span>Closed Trades</span>
     <span class="count mono" id="closed-total-pnl"></span>
   </div>
+  <div class="card-body">
   <table>
     <thead>
       <tr><th>Pair</th><th>Dir</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Status</th><th>Closed</th></tr>
@@ -350,11 +409,13 @@
       <tr class="empty-row"><td colspan="7">No closed trades</td></tr>
     </tbody>
   </table>
+  </div>
 </div>
 
 <!-- ── Streams ─────────────────────────────────────────────── -->
-<div class="card">
-  <div class="card-title"><span>Streams</span></div>
+<div class="card" id="card-streams">
+  <div class="card-title" onclick="toggleCard('card-streams')"><span>Streams</span></div>
+  <div class="card-body">
   <table>
     <thead>
       <tr><th>Name</th><th>Pair</th><th>Cycle</th><th>Status</th><th>Last Signal</th></tr>
@@ -363,6 +424,72 @@
       <tr class="empty-row"><td colspan="5">No stream data</td></tr>
     </tbody>
   </table>
+  </div>
+</div>
+
+<!-- ── Controls ────────────────────────────────────────────── -->
+<div class="card" id="card-controls">
+  <div class="card-title" onclick="toggleCard('card-controls')"><span>Controls</span></div>
+  <div class="card-body">
+    <div class="controls-bar">
+      <button class="btn-ctrl btn-pause" id="btn-pause" onclick="pauseAll()">⏸ Pause All</button>
+      <button class="btn-ctrl btn-resume" id="btn-resume" onclick="resumeAll()" style="display:none">▶ Resume All</button>
+      <button class="btn-ctrl btn-estop" id="btn-estop" onclick="emergencyStop()">⛔ Emergency Stop</button>
+    </div>
+  </div>
+</div>
+
+<!-- ── Settings ────────────────────────────────────────────── -->
+<div class="card collapsed" id="card-settings">
+  <div class="card-title" onclick="toggleCard('card-settings')"><span>Settings</span></div>
+  <div class="card-body">
+    <div class="settings-row">
+      <span class="settings-label">Risk Per Trade</span>
+      <input class="settings-input mono" type="number" id="set-risk" step="0.1" min="0.1" max="5.0" value="1.0">
+      <span class="settings-unit">%</span>
+      <span class="settings-hint">0.1 – 5.0%</span>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Risk : Reward Ratio</span>
+      <input class="settings-input mono" type="number" id="set-rr" step="0.1" min="1.0" max="5.0" value="2.0">
+      <span class="settings-unit">R</span>
+      <span class="settings-hint">1.0 – 5.0 R</span>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Max Drawdown</span>
+      <input class="settings-input mono" type="number" id="set-dd" step="0.5" min="1.0" max="25.0" value="10.0">
+      <span class="settings-unit">%</span>
+      <span class="settings-hint">Circuit breaker threshold</span>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Session Start (UTC)</span>
+      <input class="settings-input mono" type="number" id="set-sess-start" step="1" min="0" max="23" value="7">
+      <span class="settings-unit">h</span>
+      <span class="settings-hint">0 – 23</span>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Session End (UTC)</span>
+      <input class="settings-input mono" type="number" id="set-sess-end" step="1" min="0" max="23" value="21">
+      <span class="settings-unit">h</span>
+      <span class="settings-hint">0 – 23</span>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Max Concurrent Positions</span>
+      <input class="settings-input mono" type="number" id="set-max-pos" step="1" min="1" max="10" value="1">
+      <span class="settings-unit"></span>
+      <span class="settings-hint">Per instrument</span>
+    </div>
+    <div class="settings-row">
+      <span class="settings-label">Poll Interval</span>
+      <input class="settings-input mono" type="number" id="set-poll" step="10" min="10" max="3600" value="300">
+      <span class="settings-unit">sec</span>
+      <span class="settings-hint">10 – 3600s</span>
+    </div>
+    <div style="display:flex; gap:10px; margin-top:12px; align-items:center;">
+      <button class="btn-save" id="btn-save" onclick="saveSettings()">Save Settings</button>
+      <span class="mono" id="save-status" style="font-size:12px; color:#3fb950;"></span>
+    </div>
+  </div>
 </div>
 
 <!-- ── Footer ─────────────────────────────────────────────── -->
@@ -371,6 +498,80 @@
 </div>
 
 <script>
+// ── Global: collapse toggle (accessed by onclick) ──────────
+function toggleCard(id) {
+  var card = document.getElementById(id);
+  if (card) card.classList.toggle('collapsed');
+  // Persist state
+  try {
+    var state = JSON.parse(localStorage.getItem('ft_collapsed') || '{}');
+    state[id] = card.classList.contains('collapsed');
+    localStorage.setItem('ft_collapsed', JSON.stringify(state));
+  } catch(e) {}
+}
+// Restore collapsed state on load
+(function() {
+  try {
+    var state = JSON.parse(localStorage.getItem('ft_collapsed') || '{}');
+    Object.keys(state).forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el && state[id]) el.classList.add('collapsed');
+      else if (el && !state[id]) el.classList.remove('collapsed');
+    });
+  } catch(e) {}
+})();
+
+// ── Global: control actions (accessed by onclick) ──────────
+function pauseAll() {
+  fetch('/control/pause', {method:'POST'}).then(function() {
+    document.getElementById('btn-pause').style.display = 'none';
+    document.getElementById('btn-resume').style.display = '';
+  }).catch(function(e) { console.error('Pause failed:', e); });
+}
+function resumeAll() {
+  fetch('/control/resume', {method:'POST'}).then(function() {
+    document.getElementById('btn-resume').style.display = 'none';
+    document.getElementById('btn-pause').style.display = '';
+  }).catch(function(e) { console.error('Resume failed:', e); });
+}
+function emergencyStop() {
+  if (!confirm('EMERGENCY STOP — This will immediately halt ALL streams. Continue?')) return;
+  document.getElementById('btn-estop').classList.add('engaged');
+  fetch('/control/emergency-stop', {method:'POST'}).then(function() {
+    document.getElementById('btn-pause').style.display = 'none';
+    document.getElementById('btn-resume').style.display = 'none';
+  }).catch(function(e) { console.error('Emergency stop failed:', e); });
+}
+function saveSettings() {
+  var data = {
+    risk_per_trade_pct: parseFloat(document.getElementById('set-risk').value),
+    rr_ratio: parseFloat(document.getElementById('set-rr').value),
+    max_drawdown_pct: parseFloat(document.getElementById('set-dd').value),
+    session_start_utc: parseInt(document.getElementById('set-sess-start').value),
+    session_end_utc: parseInt(document.getElementById('set-sess-end').value),
+    max_concurrent_positions: parseInt(document.getElementById('set-max-pos').value),
+    poll_interval_seconds: parseInt(document.getElementById('set-poll').value),
+  };
+  var statusEl = document.getElementById('save-status');
+  statusEl.textContent = 'Saving...';
+  statusEl.style.color = '#d29922';
+  fetch('/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data)
+  }).then(function(r) {
+    if (!r.ok) throw new Error(r.status);
+    return r.json();
+  }).then(function() {
+    statusEl.textContent = '✓ Saved';
+    statusEl.style.color = '#3fb950';
+    setTimeout(function() { statusEl.textContent = ''; }, 3000);
+  }).catch(function(e) {
+    statusEl.textContent = '✗ Error: ' + e.message;
+    statusEl.style.color = '#f85149';
+  });
+}
+
 (function() {
   'use strict';
 
@@ -741,6 +942,17 @@
   // Initial poll, then repeat
   poll();
   setInterval(poll, POLL_MS);
+
+  // Load current settings once
+  fetchJSON('/settings').then(function(data) {
+    if (data.risk_per_trade_pct != null) $('set-risk').value = data.risk_per_trade_pct;
+    if (data.rr_ratio != null) $('set-rr').value = data.rr_ratio;
+    if (data.max_drawdown_pct != null) $('set-dd').value = data.max_drawdown_pct;
+    if (data.session_start_utc != null) $('set-sess-start').value = data.session_start_utc;
+    if (data.session_end_utc != null) $('set-sess-end').value = data.session_end_utc;
+    if (data.max_concurrent_positions != null) $('set-max-pos').value = data.max_concurrent_positions;
+    if (data.poll_interval_seconds != null) $('set-poll').value = data.poll_interval_seconds;
+  }).catch(function() {});
 
 })();
 </script>

@@ -48,22 +48,24 @@ def calculate_tp(
     direction: str,
     sl_price: float,
     sr_zones: list[SRZone],
+    rr_ratio: float = 2.0,
 ) -> float:
     """Calculate the take-profit price.
 
     Strategy:
-        1. Compute the 1:2 risk-reward target.
+        1. Compute the risk-reward target using *rr_ratio*.
         2. Find the nearest S/R zone in the profit direction.
         3. Return whichever is **closer** to entry.
 
     If no zone exists beyond entry in the profit direction, falls back
-    to the 1:2 RR target.
+    to the RR target.
 
     Args:
         entry_price: Trade entry price.
         direction: ``"buy"`` or ``"sell"``.
         sl_price: Stop-loss price (used to compute risk distance).
         sr_zones: All current S/R zones.
+        rr_ratio: Risk-reward ratio (default 2.0 = 1:2 R:R).
 
     Returns:
         Take-profit price rounded to 5 decimal places.
@@ -74,7 +76,7 @@ def calculate_tp(
     risk = abs(entry_price - sl_price)
 
     if direction == "buy":
-        rr_tp = entry_price + 2.0 * risk
+        rr_tp = entry_price + rr_ratio * risk
         # Nearest zone above entry
         zones_above = sorted(
             [z for z in sr_zones if z.price_level > entry_price],
@@ -82,7 +84,7 @@ def calculate_tp(
         )
         next_zone_price = zones_above[0].price_level if zones_above else None
     elif direction == "sell":
-        rr_tp = entry_price - 2.0 * risk
+        rr_tp = entry_price - rr_ratio * risk
         # Nearest zone below entry
         zones_below = sorted(
             [z for z in sr_zones if z.price_level < entry_price],

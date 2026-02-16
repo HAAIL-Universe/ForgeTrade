@@ -6,6 +6,7 @@ paper, live, and backtest modes.
 
 import logging
 import os
+import pathlib
 
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
@@ -97,7 +98,13 @@ def _run_cli() -> None:
     from app.repos.trade_repo import TradeRepo
 
     trade_repo = TradeRepo(config.db_path)
-    configure_routers(trade_repo=trade_repo, broker=broker)
+    forge_json_path = pathlib.Path(__file__).resolve().parent.parent / "forge.json"
+    configure_routers(
+        trade_repo=trade_repo,
+        broker=broker,
+        engine_manager=manager,
+        forge_json_path=forge_json_path,
+    )
 
     # Push initial status so the dashboard shows streams immediately
     for sname in manager.stream_names:
