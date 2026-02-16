@@ -9,7 +9,7 @@ from app.strategy.models import CandleData
 # ── SL/TP bounds for gold scalps ─────────────────────────────────────────
 
 MIN_SL_PIPS: float = 15.0   # $1.50 on XAU_USD
-MAX_SL_PIPS: float = 100.0  # $10.00 on XAU_USD
+MAX_SL_PIPS: float = 500.0  # $5.00 on XAU_USD — gold M1 swings are wide
 
 
 def _find_swing_lows(

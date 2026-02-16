@@ -61,6 +61,46 @@ def _is_shooting_star(candle: CandleData) -> bool:
     return upper_wick >= 2 * body and lower_wick <= body * 0.5
 
 
+def _has_momentum_buy(candles: list[CandleData]) -> tuple[bool, str]:
+    """Two consecutive bullish candles (momentum continuation)."""
+    if len(candles) < 2:
+        return False, ""
+    prev, curr = candles[-2], candles[-1]
+    if prev.close > prev.open and curr.close > curr.open:
+        return True, "bullish momentum"
+    return False, ""
+
+
+def _has_momentum_sell(candles: list[CandleData]) -> tuple[bool, str]:
+    """Two consecutive bearish candles (momentum continuation)."""
+    if len(candles) < 2:
+        return False, ""
+    prev, curr = candles[-2], candles[-1]
+    if prev.close < prev.open and curr.close < curr.open:
+        return True, "bearish momentum"
+    return False, ""
+
+
+def _is_bullish_pin_bar(candle: CandleData) -> bool:
+    """A candle with a long lower wick showing buyer rejection."""
+    body = abs(candle.close - candle.open)
+    lower_wick = min(candle.open, candle.close) - candle.low
+    total_range = candle.high - candle.low
+    if total_range == 0:
+        return False
+    return lower_wick >= 0.6 * total_range and candle.close >= candle.open
+
+
+def _is_bearish_pin_bar(candle: CandleData) -> bool:
+    """A candle with a long upper wick showing seller rejection."""
+    body = abs(candle.close - candle.open)
+    upper_wick = candle.high - max(candle.open, candle.close)
+    total_range = candle.high - candle.low
+    if total_range == 0:
+        return False
+    return upper_wick >= 0.6 * total_range and candle.close <= candle.open
+
+
 def _has_buy_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
     """Check last 2 candles for a bullish reversal pattern."""
     if len(candles) < 2:
@@ -70,6 +110,11 @@ def _has_buy_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
         return True, "bullish engulfing"
     if _is_hammer(curr):
         return True, "hammer"
+    if _is_bullish_pin_bar(curr):
+        return True, "bullish pin bar"
+    confirmed, pattern = _has_momentum_buy(candles)
+    if confirmed:
+        return True, pattern
     return False, ""
 
 
@@ -82,6 +127,11 @@ def _has_sell_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
         return True, "bearish engulfing"
     if _is_shooting_star(curr):
         return True, "shooting star"
+    if _is_bearish_pin_bar(curr):
+        return True, "bearish pin bar"
+    confirmed, pattern = _has_momentum_sell(candles)
+    if confirmed:
+        return True, pattern
     return False, ""
 
 
@@ -124,8 +174,8 @@ def evaluate_scalp_entry(
 
     if trend.direction == "bullish":
         # Price should be near or at/below the EMA (pullback)
-        # "Near" = within 0.15% of EMA
-        pullback_threshold = ema_current * 1.0015
+        # "Near" = within 0.4% of EMA
+        pullback_threshold = ema_current * 1.004
         if last_close > pullback_threshold:
             return None  # Price hasn't pulled back to EMA
 
@@ -147,7 +197,7 @@ def evaluate_scalp_entry(
 
     elif trend.direction == "bearish":
         # Price should be near or at/above the EMA (pullback up)
-        pullback_threshold = ema_current * 0.9985
+        pullback_threshold = ema_current * 0.996
         if last_close < pullback_threshold:
             return None  # Price hasn't pulled back up to EMA
 

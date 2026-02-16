@@ -10,7 +10,6 @@ from app.risk.scalp_sl_tp import calculate_scalp_sl, calculate_scalp_tp
 from app.strategy.base import StrategyProtocol, StrategyResult
 from app.strategy.models import CandleData, EntrySignal, INSTRUMENT_PIP_VALUES, SRZone
 from app.strategy.scalp_signals import ScalpEntrySignal, evaluate_scalp_entry
-from app.strategy.spread_filter import is_spread_acceptable
 from app.strategy.trend import detect_trend
 
 
@@ -26,7 +25,7 @@ class TrendScalpStrategy:
         6. Return StrategyResult.
     """
 
-    MAX_SPREAD_PIPS: float = 4.0
+    MAX_SPREAD_PIPS: float = 8.0
     DEFAULT_RR_RATIO: float = 1.5
 
     def __init__(self) -> None:
@@ -131,17 +130,14 @@ class TrendScalpStrategy:
                 "close": last_m1.close,
             }
 
-        # Spread check using S5 candle as proxy
+        # Spread check — use the *tightest* S5 candle as spread proxy
+        # (the widest candles reflect price action, not spread)
         if s5_candles:
-            last_s5 = s5_candles[-1]
-            mid = last_s5.close
-            half_spread = (last_s5.high - last_s5.low) / 2
-            bid_est = mid - half_spread
-            ask_est = mid + half_spread
-            spread_pips = abs(ask_est - bid_est) / pip_value
+            min_range = min(c.high - c.low for c in s5_candles)
+            spread_pips = min_range / pip_value
             self.last_insight["spread_pips"] = round(spread_pips, 1)
             self.last_insight["max_spread_pips"] = self.MAX_SPREAD_PIPS
-            if not is_spread_acceptable(bid_est, ask_est, self.MAX_SPREAD_PIPS, pip_value):
+            if spread_pips > self.MAX_SPREAD_PIPS:
                 self.last_insight["result"] = "spread_too_wide"
                 return None
         checks["spread_acceptable"] = True
@@ -158,10 +154,10 @@ class TrendScalpStrategy:
                 self.last_insight["ema9"] = round(ema_cur, 2)
                 self.last_insight["price_vs_ema"] = round(price - ema_cur, 2)
                 # Check if it was pullback or confirmation that failed
-                if trend.direction == "bullish" and price <= ema_cur * 1.0015:
+                if trend.direction == "bullish" and price <= ema_cur * 1.004:
                     checks["pullback_to_ema"] = True
                     self.last_insight["result"] = "no_confirmation_pattern"
-                elif trend.direction == "bearish" and price >= ema_cur * 0.9985:
+                elif trend.direction == "bearish" and price >= ema_cur * 0.996:
                     checks["pullback_to_ema"] = True
                     self.last_insight["result"] = "no_confirmation_pattern"
                 else:
