@@ -4,6 +4,8 @@ Handles all communication with OANDA: candle fetching, account queries,
 order placement, and position management.
 """
 
+import asyncio
+import logging
 from typing import Optional
 
 import httpx
@@ -17,6 +19,13 @@ from app.broker.models import (
 )
 from app.config import Config
 
+logger = logging.getLogger("forgetrade")
+
+# Retry settings
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 2.0  # seconds; doubles each attempt
+_RETRYABLE_STATUS_CODES = {502, 503, 504, 429}
+
 
 class OandaClient:
     """Async client wrapping OANDA v20 REST API."""
@@ -29,6 +38,62 @@ class OandaClient:
             "Authorization": f"Bearer {config.oanda_api_token}",
             "Content-Type": "application/json",
         }
+
+    # ── Retry helper ─────────────────────────────────────────────────────
+
+    async def _request_with_retry(
+        self,
+        method: str,
+        url: str,
+        **kwargs,
+    ) -> httpx.Response:
+        """Execute an HTTP request with exponential-backoff retry.
+
+        Retries on transient server errors (502, 503, 504) and rate-limits
+        (429).  Non-retryable errors are raised immediately.
+        """
+        last_exc: Optional[Exception] = None
+
+        for attempt in range(_MAX_RETRIES):
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await getattr(client, method)(
+                        url,
+                        headers=self._headers,
+                        timeout=30.0,
+                        **kwargs,
+                    )
+
+                if resp.status_code in _RETRYABLE_STATUS_CODES:
+                    delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                    logger.warning(
+                        "OANDA %s %s returned %d — retry %d/%d in %.1fs",
+                        method.upper(), url, resp.status_code,
+                        attempt + 1, _MAX_RETRIES, delay,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = httpx.HTTPStatusError(
+                        f"Server error '{resp.status_code}'",
+                        request=resp.request,
+                        response=resp,
+                    )
+                    continue
+
+                resp.raise_for_status()
+                return resp
+
+            except httpx.TransportError as exc:
+                delay = _RETRY_BASE_DELAY * (2 ** attempt)
+                logger.warning(
+                    "OANDA %s %s transport error (%s) — retry %d/%d in %.1fs",
+                    method.upper(), url, exc,
+                    attempt + 1, _MAX_RETRIES, delay,
+                )
+                last_exc = exc
+                await asyncio.sleep(delay)
+
+        # All retries exhausted — raise the last error
+        raise last_exc  # type: ignore[misc]
 
     # ── Candle data ──────────────────────────────────────────────────────
 
@@ -57,11 +122,7 @@ class OandaClient:
             "price": "M",  # mid prices
         }
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                url, headers=self._headers, params=params, timeout=30.0
-            )
-            resp.raise_for_status()
+        resp = await self._request_with_retry("get", url, params=params)
 
         data = resp.json()
         candles: list[Candle] = []
@@ -86,11 +147,7 @@ class OandaClient:
         """Query OANDA for account balance, equity, and open position count."""
         url = f"{self._base_url}/v3/accounts/{self._account_id}/summary"
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                url, headers=self._headers, timeout=30.0
-            )
-            resp.raise_for_status()
+        resp = await self._request_with_retry("get", url)
 
         acct = resp.json()["account"]
         return AccountSummary(
@@ -127,11 +184,7 @@ class OandaClient:
             }
         }
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                url, headers=self._headers, json=body, timeout=30.0
-            )
-            resp.raise_for_status()
+        resp = await self._request_with_retry("post", url, json=body)
 
         data = resp.json()
         fill = data["orderFillTransaction"]
@@ -149,11 +202,7 @@ class OandaClient:
         """Return all open positions on the account."""
         url = f"{self._base_url}/v3/accounts/{self._account_id}/openPositions"
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                url, headers=self._headers, timeout=30.0
-            )
-            resp.raise_for_status()
+        resp = await self._request_with_retry("get", url)
 
         positions: list[Position] = []
         for p in resp.json().get("positions", []):
@@ -187,10 +236,6 @@ class OandaClient:
         )
         body = {"longUnits": "ALL", "shortUnits": "ALL"}
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.put(
-                url, headers=self._headers, json=body, timeout=30.0
-            )
-            resp.raise_for_status()
+        resp = await self._request_with_retry("put", url, json=body)
 
         return resp.json()
