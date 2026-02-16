@@ -13,6 +13,7 @@ from app.broker.models import AccountSummary, Candle, OrderResponse
 from app.config import Config
 from app.engine import TradingEngine
 from app.strategy.models import CandleData
+from app.strategy.sr_rejection import SRRejectionStrategy
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -141,7 +142,8 @@ class TestTradingEngine:
             daily_candles=_daily_candles_for_engine(),
             h4_candles=_h4_candles_buy_signal(),
         )
-        engine = TradingEngine(config=config, broker=broker)
+        strategy = SRRejectionStrategy()
+        engine = TradingEngine(config=config, broker=broker, strategy=strategy)
         await engine.initialize()
 
         # 12:00 UTC = within session
@@ -163,7 +165,8 @@ class TestTradingEngine:
             daily_candles=_daily_candles_for_engine(),
             h4_candles=_h4_candles_buy_signal(),
         )
-        engine = TradingEngine(config=config, broker=broker)
+        strategy = SRRejectionStrategy()
+        engine = TradingEngine(config=config, broker=broker, strategy=strategy)
         await engine.initialize()
 
         # 03:00 UTC = outside session
@@ -182,7 +185,8 @@ class TestTradingEngine:
             daily_candles=_daily_candles_for_engine(),
             h4_candles=_h4_candles_no_signal(),
         )
-        engine = TradingEngine(config=config, broker=broker)
+        strategy = SRRejectionStrategy()
+        engine = TradingEngine(config=config, broker=broker, strategy=strategy)
         await engine.initialize()
 
         utc_now = datetime(2025, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -201,7 +205,8 @@ class TestTradingEngine:
             h4_candles=_h4_candles_buy_signal(),
             equity=10_000.0,
         )
-        engine = TradingEngine(config=config, broker=broker)
+        strategy = SRRejectionStrategy()
+        engine = TradingEngine(config=config, broker=broker, strategy=strategy)
         await engine.initialize()
 
         # Simulate drawdown by updating tracker directly

@@ -1,4 +1,4 @@
-"""ATR (Average True Range) calculation — pure function, no I/O."""
+"""Technical indicators — ATR, EMA. Pure functions, no I/O."""
 
 from app.strategy.models import CandleData
 
@@ -35,3 +35,38 @@ def calculate_atr(candles: list[CandleData], period: int = 14) -> float:
     # Use the last *period* true ranges
     recent = true_ranges[-period:]
     return sum(recent) / len(recent)
+
+
+def calculate_ema(candles: list[CandleData], period: int) -> list[float]:
+    """Calculate an Exponential Moving Average series.
+
+    Uses the standard EMA formula:
+        ``EMA_today = close × k + EMA_yesterday × (1 - k)``
+    where ``k = 2 / (period + 1)``.
+
+    Requires at least *period* candles. The first EMA value is seeded
+    with the SMA of the first *period* closes.
+
+    Returns the full EMA series (same length as *candles*). Entries
+    before the seed period are set to ``float('nan')``.
+
+    Raises ``ValueError`` if fewer than *period* candles are provided.
+    """
+    if len(candles) < period:
+        raise ValueError(
+            f"Need at least {period} candles for EMA({period}), "
+            f"got {len(candles)}"
+        )
+
+    k = 2.0 / (period + 1)
+    closes = [c.close for c in candles]
+    ema: list[float] = [float("nan")] * len(closes)
+
+    # Seed: SMA of first *period* closes
+    seed = sum(closes[:period]) / period
+    ema[period - 1] = seed
+
+    for i in range(period, len(closes)):
+        ema[i] = closes[i] * k + ema[i - 1] * (1 - k)
+
+    return ema

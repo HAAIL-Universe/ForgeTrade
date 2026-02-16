@@ -87,7 +87,11 @@ def _run_cli() -> None:
         time.sleep(5)
 
     broker = OandaClient(config)
-    engine = TradingEngine(config=config, broker=broker)
+
+    from app.strategy.sr_rejection import SRRejectionStrategy
+
+    strategy = SRRejectionStrategy()
+    engine = TradingEngine(config=config, broker=broker, strategy=strategy)
 
     # Inject broker into routers for /positions endpoint
     from app.api.routers import configure_routers

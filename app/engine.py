@@ -1,7 +1,7 @@
 """ForgeTrade — Trading engine (orchestration loop).
 
 Connects strategy, risk management, and broker into a single polling loop.
-Fetch candles → evaluate signal → check risk → place order.
+Strategy evaluates → engine handles position sizing + order placement.
 """
 
 import asyncio
@@ -15,12 +15,9 @@ from app.broker.oanda_client import OandaClient
 from app.config import Config
 from app.risk.drawdown import DrawdownTracker
 from app.risk.position_sizer import calculate_units
-from app.risk.sl_tp import calculate_sl, calculate_tp
-from app.strategy.indicators import calculate_atr
-from app.strategy.models import CandleData
+from app.strategy.base import StrategyProtocol
+from app.strategy.models import INSTRUMENT_PIP_VALUES
 from app.strategy.session_filter import is_in_session
-from app.strategy.signals import evaluate_signal
-from app.strategy.sr_zones import detect_sr_zones
 
 logger = logging.getLogger("forgetrade")
 
@@ -31,11 +28,18 @@ class TradingEngine:
     Args:
         config: Application configuration.
         broker: An ``OandaClient`` (or compatible duck-type / mock).
+        strategy: A strategy implementing ``StrategyProtocol``.
     """
 
-    def __init__(self, config: Config, broker: OandaClient) -> None:
+    def __init__(
+        self,
+        config: Config,
+        broker: OandaClient,
+        strategy: Optional[StrategyProtocol] = None,
+    ) -> None:
         self._config = config
         self._broker = broker
+        self._strategy = strategy
         self._drawdown: Optional[DrawdownTracker] = None
         self._running: bool = False
         self._cycle_count: int = 0
@@ -131,51 +135,29 @@ class TradingEngine:
         ):
             return {"action": "skipped", "reason": "outside_session"}
 
-        # 3 ── Fetch daily candles → detect S/R zones
-        daily_raw = await self._broker.fetch_candles(
-            self._config.trade_pair, "D", count=50,
-        )
-        daily = [
-            CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
-            for c in daily_raw
-        ]
-        zones = detect_sr_zones(daily)
-        if not zones:
-            return {"action": "skipped", "reason": "no_zones"}
+        # 3 ── Strategy evaluation (delegates to pluggable strategy)
+        if self._strategy is None:
+            return {"action": "skipped", "reason": "no_strategy"}
 
-        # 4 ── Fetch 4H candles → evaluate signal
-        h4_raw = await self._broker.fetch_candles(
-            self._config.trade_pair, "H4", count=20,
-        )
-        h4 = [
-            CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
-            for c in h4_raw
-        ]
-        signal = evaluate_signal(h4, zones)
-        if signal is None:
+        result = await self._strategy.evaluate(self._broker, self._config)
+        if result is None:
             update_pending_signal({
                 "pair": self._config.trade_pair,
                 "direction": None,
                 "zone_price": None,
                 "zone_type": None,
-                "reason": "No rejection wick detected",
+                "reason": "No signal from strategy",
                 "status": "no_signal",
                 "evaluated_at": utc_now.isoformat(),
                 "stream_name": "default",
             })
             return {"action": "skipped", "reason": "no_signal"}
 
-        # 5 ── Risk calculations
-        atr = calculate_atr(daily)
-        sl = calculate_sl(
-            signal.entry_price,
-            signal.direction,
-            signal.sr_zone.price_level,
-            atr,
-        )
-        tp = calculate_tp(signal.entry_price, signal.direction, sl, zones)
+        signal = result.signal
+        sl = result.sl
+        tp = result.tp
 
-        # Update watchlist with the signal (status will become "entered" if order placed)
+        # Update watchlist with the signal
         update_pending_signal({
             "pair": self._config.trade_pair,
             "direction": signal.direction,
@@ -187,15 +169,15 @@ class TradingEngine:
             "stream_name": "default",
         })
 
-        # 6 ── Account state + position sizing
+        # 4 ── Account state + position sizing
         summary = await self._broker.get_account_summary()
         if self._drawdown:
             self._drawdown.update(summary.equity)
-            # Re-check circuit breaker after equity update
             if self._drawdown.circuit_breaker_active:
                 return {"action": "halted", "reason": "circuit_breaker"}
 
-        sl_pips = abs(signal.entry_price - sl) / 0.0001
+        pip_value = INSTRUMENT_PIP_VALUES.get(self._config.trade_pair, 0.0001)
+        sl_pips = abs(signal.entry_price - sl) / pip_value
         units = calculate_units(
             summary.equity,
             self._config.risk_per_trade_pct,
@@ -204,12 +186,13 @@ class TradingEngine:
         if signal.direction == "sell":
             units = -units
 
-        # 7 ── Place order
+        # 5 ── Place order
+        price_digits = 2 if "XAU" in self._config.trade_pair else 5
         order_req = OrderRequest(
             instrument=self._config.trade_pair,
             units=units,
-            stop_loss_price=round(sl, 5),
-            take_profit_price=round(tp, 5),
+            stop_loss_price=round(sl, price_digits),
+            take_profit_price=round(tp, price_digits),
         )
         order_resp = await self._broker.place_order(order_req)
 
@@ -234,7 +217,7 @@ class TradingEngine:
             "direction": signal.direction,
             "units": units,
             "entry": signal.entry_price,
-            "sl": round(sl, 5),
-            "tp": round(tp, 5),
+            "sl": round(sl, price_digits),
+            "tp": round(tp, price_digits),
             "reason": signal.reason,
         }

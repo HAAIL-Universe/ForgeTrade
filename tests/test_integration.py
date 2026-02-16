@@ -13,6 +13,7 @@ from app.broker.models import AccountSummary, Candle, OrderResponse
 from app.config import Config
 from app.engine import TradingEngine
 from app.main import warn_if_live
+from app.strategy.sr_rejection import SRRejectionStrategy
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────
@@ -111,7 +112,8 @@ class TestGracefulShutdown:
         """Shutdown handler stops the engine loop."""
         config = _make_config()
         broker = MockBroker(_daily_candles(), _h4_buy_candles())
-        engine = TradingEngine(config=config, broker=broker)
+        strategy = SRRejectionStrategy()
+        engine = TradingEngine(config=config, broker=broker, strategy=strategy)
         await engine.initialize()
 
         # Stop immediately before entering the loop
@@ -153,7 +155,8 @@ class TestErrorResilience:
 
         config = _make_config()
         broker = ErrorOnceBroker(good_broker)
-        engine = TradingEngine(config=config, broker=broker)
+        strategy = SRRejectionStrategy()
+        engine = TradingEngine(config=config, broker=broker, strategy=strategy)
         await engine.initialize()
 
         utc_now = datetime(2025, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
@@ -180,8 +183,10 @@ class TestPaperLiveSameLogic:
         broker_p = MockBroker(daily, h4)
         broker_l = MockBroker(daily, h4)
 
-        engine_p = TradingEngine(config=config_paper, broker=broker_p)
-        engine_l = TradingEngine(config=config_live, broker=broker_l)
+        strategy_p = SRRejectionStrategy()
+        strategy_l = SRRejectionStrategy()
+        engine_p = TradingEngine(config=config_paper, broker=broker_p, strategy=strategy_p)
+        engine_l = TradingEngine(config=config_live, broker=broker_l, strategy=strategy_l)
 
         await engine_p.initialize()
         await engine_l.initialize()

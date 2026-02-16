@@ -34,3 +34,18 @@ class EntrySignal:
     sr_zone: SRZone
     candle_time: str
     reason: str
+
+
+# ── Instrument metadata ──────────────────────────────────────────────────
+
+INSTRUMENT_PIP_VALUES: dict[str, float] = {
+    "EUR_USD": 0.0001,
+    "GBP_USD": 0.0001,
+    "USD_JPY": 0.01,
+    "USD_CHF": 0.0001,
+    "AUD_USD": 0.0001,
+    "NZD_USD": 0.0001,
+    "USD_CAD": 0.0001,
+    "XAU_USD": 0.01,
+    "XAG_USD": 0.001,
+}
