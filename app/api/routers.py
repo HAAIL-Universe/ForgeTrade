@@ -13,7 +13,7 @@ router = APIRouter()
 
 # ── Shared state (set during app startup) ────────────────────────────────
 
-_bot_status: dict = {
+_DEFAULT_STREAM_STATUS: dict = {
     "mode": "idle",
     "running": False,
     "pair": "EUR_USD",
@@ -25,11 +25,15 @@ _bot_status: dict = {
     "open_positions": 0,
     "last_signal_check": None,
     "uptime_seconds": 0,
-    "stream_name": "default",
     "cycle_count": 0,
     "last_cycle_at": None,
     "last_signal_time": None,
     "last_order_time": None,
+}
+
+# Keyed by stream name → status dict
+_stream_statuses: dict[str, dict] = {
+    "default": {**_DEFAULT_STREAM_STATUS, "stream_name": "default"},
 }
 
 _trade_repo = None   # Set via configure_routers()
@@ -49,16 +53,23 @@ def configure_routers(
         bot_status: Optional dict to replace the default status state.
         broker: An ``OandaClient`` instance for position queries.
     """
-    global _trade_repo, _bot_status, _broker  # noqa: PLW0603
+    global _trade_repo, _broker  # noqa: PLW0603
     _trade_repo = trade_repo
     _broker = broker
     if bot_status is not None:
-        _bot_status.update(bot_status)
+        stream_name = bot_status.get("stream_name", "default")
+        _stream_statuses.setdefault(stream_name, {**_DEFAULT_STREAM_STATUS})
+        _stream_statuses[stream_name].update(bot_status)
 
 
-def update_bot_status(**fields) -> None:
-    """Update individual fields of the bot status dict."""
-    _bot_status.update(fields)
+def update_bot_status(stream_name: str = "default", **fields) -> None:
+    """Update individual fields of a stream's status dict."""
+    if stream_name not in _stream_statuses:
+        _stream_statuses[stream_name] = {
+            **_DEFAULT_STREAM_STATUS,
+            "stream_name": stream_name,
+        }
+    _stream_statuses[stream_name].update(fields)
 
 
 def update_pending_signal(signal_data: Optional[dict]) -> None:
@@ -72,8 +83,17 @@ def update_pending_signal(signal_data: Optional[dict]) -> None:
 
 @router.get("/status")
 async def get_status():
-    """Return current bot state — mode, equity, positions, drawdown."""
-    return _bot_status
+    """Return status for all streams."""
+    return {"streams": _stream_statuses}
+
+
+@router.get("/status/{stream_name}")
+async def get_stream_status(stream_name: str):
+    """Return status for a single stream."""
+    status = _stream_statuses.get(stream_name)
+    if status is None:
+        return {"error": f"Unknown stream: {stream_name}"}
+    return status
 
 
 @router.get("/trades")
@@ -85,7 +105,9 @@ async def get_trades(
     """Return recent trade log entries."""
     if _trade_repo is None:
         return {"trades": [], "total": 0}
-    return _trade_repo.get_trades(limit=limit, status_filter=status)
+    return _trade_repo.get_trades(
+        limit=limit, status_filter=status, stream_name=stream,
+    )
 
 
 @router.get("/positions")
@@ -125,7 +147,9 @@ async def get_closed_trades(
     """Return closed trades with P&L summary."""
     if _trade_repo is None:
         return {"trades": [], "total": 0, "total_pnl": 0.0}
-    result = _trade_repo.get_trades(limit=limit, status_filter="closed")
+    result = _trade_repo.get_trades(
+        limit=limit, status_filter="closed", stream_name=stream,
+    )
     total_pnl = sum(t.get("pnl", 0) or 0 for t in result.get("trades", []))
     result["total_pnl"] = round(total_pnl, 2)
     return result

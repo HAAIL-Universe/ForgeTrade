@@ -13,6 +13,7 @@ from app.api.routers import update_bot_status, update_pending_signal
 from app.broker.models import OrderRequest
 from app.broker.oanda_client import OandaClient
 from app.config import Config
+from app.models.stream_config import StreamConfig
 from app.risk.drawdown import DrawdownTracker
 from app.risk.position_sizer import calculate_units
 from app.strategy.base import StrategyProtocol
@@ -26,9 +27,10 @@ class TradingEngine:
     """Orchestrates one evaluation-and-execution cycle per call.
 
     Args:
-        config: Application configuration.
+        config: Application configuration (global settings).
         broker: An ``OandaClient`` (or compatible duck-type / mock).
         strategy: A strategy implementing ``StrategyProtocol``.
+        stream_config: Per-stream settings. If None, uses global config.
     """
 
     def __init__(
@@ -36,13 +38,47 @@ class TradingEngine:
         config: Config,
         broker: OandaClient,
         strategy: Optional[StrategyProtocol] = None,
+        stream_config: Optional[StreamConfig] = None,
     ) -> None:
         self._config = config
         self._broker = broker
         self._strategy = strategy
+        self._stream_config = stream_config
         self._drawdown: Optional[DrawdownTracker] = None
         self._running: bool = False
         self._cycle_count: int = 0
+
+    @property
+    def stream_name(self) -> str:
+        """Return the name of this engine's stream."""
+        if self._stream_config:
+            return self._stream_config.name
+        return "default"
+
+    @property
+    def instrument(self) -> str:
+        """Return the instrument this engine trades."""
+        if self._stream_config:
+            return self._stream_config.instrument
+        return self._config.trade_pair
+
+    @property
+    def _session_start(self) -> int:
+        if self._stream_config:
+            return self._stream_config.session_start_utc
+        return self._config.session_start_utc
+
+    @property
+    def _session_end(self) -> int:
+        if self._stream_config:
+            return self._stream_config.session_end_utc
+        return self._config.session_end_utc
+
+    @property
+    def _risk_pct(self) -> float:
+        if self._stream_config:
+            return self._stream_config.risk_per_trade_pct
+        return self._config.risk_per_trade_pct
 
     # ── Lifecycle ────────────────────────────────────────────────────────
 
@@ -63,18 +99,25 @@ class TradingEngine:
 
     async def run(
         self,
-        poll_interval: int = 300,
+        poll_interval: int | None = None,
         max_cycles: int = 0,
     ) -> list[dict]:
         """Run the trading loop until stopped.
 
         Args:
-            poll_interval: Seconds between cycles.
+            poll_interval: Seconds between cycles. Defaults to stream config
+                           or 300.
             max_cycles: Stop after this many cycles (0 = unlimited).
 
         Returns:
             List of per-cycle result dicts.
         """
+        if poll_interval is None:
+            poll_interval = (
+                self._stream_config.poll_interval_seconds
+                if self._stream_config
+                else 300
+            )
         results: list[dict] = []
         cycle = 0
 
@@ -86,6 +129,7 @@ class TradingEngine:
                 results.append(result)
                 logger.info("Cycle %d: %s", cycle, result.get("action", "unknown"))
                 update_bot_status(
+                    stream_name=self.stream_name,
                     cycle_count=self._cycle_count,
                     last_cycle_at=datetime.now(timezone.utc).isoformat(),
                 )
@@ -130,8 +174,8 @@ class TradingEngine:
         # 2 ── Session filter
         if not is_in_session(
             utc_now.hour,
-            self._config.session_start_utc,
-            self._config.session_end_utc,
+            self._session_start,
+            self._session_end,
         ):
             return {"action": "skipped", "reason": "outside_session"}
 
@@ -142,14 +186,14 @@ class TradingEngine:
         result = await self._strategy.evaluate(self._broker, self._config)
         if result is None:
             update_pending_signal({
-                "pair": self._config.trade_pair,
+                "pair": self.instrument,
                 "direction": None,
                 "zone_price": None,
                 "zone_type": None,
                 "reason": "No signal from strategy",
                 "status": "no_signal",
                 "evaluated_at": utc_now.isoformat(),
-                "stream_name": "default",
+                "stream_name": self.stream_name,
             })
             return {"action": "skipped", "reason": "no_signal"}
 
@@ -159,14 +203,14 @@ class TradingEngine:
 
         # Update watchlist with the signal
         update_pending_signal({
-            "pair": self._config.trade_pair,
+            "pair": self.instrument,
             "direction": signal.direction,
             "zone_price": signal.sr_zone.price_level,
             "zone_type": signal.sr_zone.zone_type,
             "reason": signal.reason,
             "status": "watching",
             "evaluated_at": utc_now.isoformat(),
-            "stream_name": "default",
+            "stream_name": self.stream_name,
         })
 
         # 4 ── Account state + position sizing
@@ -176,20 +220,20 @@ class TradingEngine:
             if self._drawdown.circuit_breaker_active:
                 return {"action": "halted", "reason": "circuit_breaker"}
 
-        pip_value = INSTRUMENT_PIP_VALUES.get(self._config.trade_pair, 0.0001)
+        pip_value = INSTRUMENT_PIP_VALUES.get(self.instrument, 0.0001)
         sl_pips = abs(signal.entry_price - sl) / pip_value
         units = calculate_units(
             summary.equity,
-            self._config.risk_per_trade_pct,
+            self._risk_pct,
             sl_pips,
         )
         if signal.direction == "sell":
             units = -units
 
         # 5 ── Place order
-        price_digits = 2 if "XAU" in self._config.trade_pair else 5
+        price_digits = 2 if "XAU" in self.instrument else 5
         order_req = OrderRequest(
-            instrument=self._config.trade_pair,
+            instrument=self.instrument,
             units=units,
             stop_loss_price=round(sl, price_digits),
             take_profit_price=round(tp, price_digits),
@@ -198,16 +242,17 @@ class TradingEngine:
 
         # Update watchlist status to "entered"
         update_pending_signal({
-            "pair": self._config.trade_pair,
+            "pair": self.instrument,
             "direction": signal.direction,
             "zone_price": signal.sr_zone.price_level,
             "zone_type": signal.sr_zone.zone_type,
             "reason": signal.reason,
             "status": "entered",
             "evaluated_at": utc_now.isoformat(),
-            "stream_name": "default",
+            "stream_name": self.stream_name,
         })
         update_bot_status(
+            stream_name=self.stream_name,
             last_order_time=utc_now.isoformat(),
         )
 

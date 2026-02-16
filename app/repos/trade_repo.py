@@ -32,6 +32,7 @@ class TradeRepo:
         sr_zone_type: str,
         entry_reason: str,
         opened_at: str,
+        stream_name: str = "default",
     ) -> int:
         """Insert a new open trade and return its ``id``."""
         conn = get_connection(self._db_path)
@@ -41,13 +42,13 @@ class TradeRepo:
                 INSERT INTO trades
                     (mode, direction, pair, entry_price, stop_loss,
                      take_profit, units, sr_zone_price, sr_zone_type,
-                     entry_reason, opened_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     entry_reason, opened_at, stream_name)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     mode, direction, pair, entry_price, stop_loss,
                     take_profit, units, sr_zone_price, sr_zone_type,
-                    entry_reason, opened_at,
+                    entry_reason, opened_at, stream_name,
                 ),
             )
             conn.commit()
@@ -85,6 +86,7 @@ class TradeRepo:
         self,
         limit: int = 20,
         status_filter: Optional[str] = None,
+        stream_name: Optional[str] = None,
     ) -> dict:
         """Return recent trades as a dict matching the physics.yaml schema.
 
@@ -93,21 +95,28 @@ class TradeRepo:
         """
         conn = get_connection(self._db_path)
         try:
+            conditions: list[str] = []
+            params: list = []
+
             if status_filter:
-                rows = conn.execute(
-                    "SELECT * FROM trades WHERE status = ? ORDER BY id DESC LIMIT ?",
-                    (status_filter, limit),
-                ).fetchall()
-                total = conn.execute(
-                    "SELECT COUNT(*) FROM trades WHERE status = ?",
-                    (status_filter,),
-                ).fetchone()[0]
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM trades ORDER BY id DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
-                total = conn.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
+                conditions.append("status = ?")
+                params.append(status_filter)
+            if stream_name:
+                conditions.append("stream_name = ?")
+                params.append(stream_name)
+
+            where_clause = ""
+            if conditions:
+                where_clause = "WHERE " + " AND ".join(conditions)
+
+            rows = conn.execute(
+                f"SELECT * FROM trades {where_clause} ORDER BY id DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
+            total = conn.execute(
+                f"SELECT COUNT(*) FROM trades {where_clause}",
+                params,
+            ).fetchone()[0]
 
             trades = [dict(row) for row in rows]
             return {"trades": trades, "total": total}

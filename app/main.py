@@ -60,8 +60,8 @@ def _run_cli() -> None:
     import time
 
     from app.broker.oanda_client import OandaClient
-    from app.config import load_config
-    from app.engine import TradingEngine
+    from app.config import load_config, load_streams
+    from app.engine_manager import EngineManager
     from app.repos.db import init_db
 
     parser = argparse.ArgumentParser(description="ForgeTrade trading bot")
@@ -88,10 +88,9 @@ def _run_cli() -> None:
 
     broker = OandaClient(config)
 
-    from app.strategy.sr_rejection import SRRejectionStrategy
-
-    strategy = SRRejectionStrategy()
-    engine = TradingEngine(config=config, broker=broker, strategy=strategy)
+    streams = load_streams()
+    manager = EngineManager(config=config, broker=broker, streams=streams)
+    manager.build_engines()
 
     # Inject broker into routers for /positions endpoint
     from app.api.routers import configure_routers
@@ -104,22 +103,22 @@ def _run_cli() -> None:
 
     def handle_shutdown(signum, frame):
         logger.info("Shutdown signal received — stopping gracefully.")
-        engine.stop()
+        manager.stop_all()
 
     signal.signal(signal.SIGINT, handle_shutdown)
 
     if args.mode == "backtest":
         _run_backtest(config, broker, args.start, args.end)
     else:
-        asyncio.run(_run_trading(engine, args.mode))
+        asyncio.run(_run_engine_manager(manager, args.mode))
 
 
-async def _run_trading(engine, mode: str) -> None:
-    """Initialise and run the trading engine loop."""
-    logger.info("Starting ForgeTrade in %s mode.", mode)
-    await engine.initialize()
-    await engine.run()
-    logger.info("ForgeTrade stopped.")
+async def _run_engine_manager(manager, mode: str) -> None:
+    """Initialise and run all trading streams."""
+    logger.info("Starting ForgeTrade in %s mode with %d stream(s).",
+                mode, len(manager.stream_names))
+    results = await manager.run_all()
+    logger.info("ForgeTrade stopped. Results: %s", list(results.keys()))
 
 
 def _run_backtest(config, broker, start_date, end_date) -> None:

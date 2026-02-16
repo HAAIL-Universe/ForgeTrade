@@ -135,14 +135,17 @@ class TestClosedTradesEndpoint:
         repo = _make_trade_repo()
         configure_routers(trade_repo=repo)
         client.get("/trades/closed?limit=10")
-        repo.get_trades.assert_called_with(limit=10, status_filter="closed")
+        repo.get_trades.assert_called_with(
+            limit=10, status_filter="closed", stream_name=None,
+        )
 
 
 class TestStatusEnriched:
     def test_status_includes_cycle_count(self):
         configure_routers(trade_repo=_make_trade_repo())
-        update_bot_status(cycle_count=42, last_cycle_at="2025-01-01T12:00:00+00:00")
-        resp = client.get("/status")
+        update_bot_status(stream_name="default", cycle_count=42,
+                          last_cycle_at="2025-01-01T12:00:00+00:00")
+        resp = client.get("/status/default")
         data = resp.json()
         assert data["cycle_count"] == 42
         assert data["last_cycle_at"] == "2025-01-01T12:00:00+00:00"
@@ -151,7 +154,9 @@ class TestStatusEnriched:
         configure_routers(trade_repo=_make_trade_repo())
         update_bot_status(stream_name="sr-swing")
         resp = client.get("/status")
-        assert resp.json()["stream_name"] == "sr-swing"
+        data = resp.json()
+        assert "streams" in data
+        assert "sr-swing" in data["streams"]
 
 
 class TestDashboardServed:

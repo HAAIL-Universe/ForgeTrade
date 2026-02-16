@@ -158,13 +158,14 @@ class TestAPIEndpoints:
     def test_status_endpoint(self):
         """GET /status returns 200 with expected schema."""
         update_bot_status(
+            stream_name="default",
             mode="paper", running=True, pair="EUR_USD",
             equity=10000.0, balance=10000.0, peak_equity=10000.0,
             drawdown_pct=0.0, circuit_breaker_active=False,
             open_positions=0, last_signal_check=None, uptime_seconds=120,
         )
         client = TestClient(app)
-        response = client.get("/status")
+        response = client.get("/status/default")
         assert response.status_code == 200
         data = response.json()
         assert data["mode"] == "paper"

@@ -13,5 +13,31 @@
     "dir": "app/static",
     "build_cmd": null,
     "test_cmd": null
-  }
+  },
+  "streams": [
+    {
+      "name": "sr-swing",
+      "instrument": "EUR_USD",
+      "strategy": "sr_rejection",
+      "timeframes": ["D", "H4"],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 7,
+      "session_end_utc": 20,
+      "enabled": true
+    },
+    {
+      "name": "micro-scalp",
+      "instrument": "XAU_USD",
+      "strategy": "trend_scalp",
+      "timeframes": ["H1", "M5"],
+      "poll_interval_seconds": 60,
+      "risk_per_trade_pct": 0.5,
+      "max_concurrent_positions": 2,
+      "session_start_utc": 8,
+      "session_end_utc": 16,
+      "enabled": false
+    }
+  ]
 }

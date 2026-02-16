@@ -2,12 +2,17 @@
 
 Loads .env variables into a typed config object.
 Validates required variables on startup.
+Loads stream definitions from forge.json.
 """
 
+import json
 import os
+import pathlib
 from dataclasses import dataclass
 
 from dotenv import load_dotenv
+
+from app.models.stream_config import StreamConfig
 
 
 _REQUIRED_VARS = [
@@ -15,6 +20,8 @@ _REQUIRED_VARS = [
     "OANDA_API_TOKEN",
     "OANDA_ENVIRONMENT",
 ]
+
+_FORGE_JSON = pathlib.Path(__file__).resolve().parent.parent / "forge.json"
 
 
 @dataclass(frozen=True)
@@ -68,3 +75,47 @@ def load_config(env_path: str | None = None) -> Config:
         log_level=os.environ.get("LOG_LEVEL", "INFO"),
         health_port=int(os.environ.get("HEALTH_PORT", "8080")),
     )
+
+
+def load_streams() -> list[StreamConfig]:
+    """Load stream definitions from ``forge.json``.
+
+    If ``forge.json`` has no ``streams`` array, returns a single default
+    stream synthesized from environment variables for backward compatibility.
+    """
+    if _FORGE_JSON.exists():
+        data = json.loads(_FORGE_JSON.read_text(encoding="utf-8"))
+        raw_streams = data.get("streams", [])
+        if raw_streams:
+            return [
+                StreamConfig(
+                    name=s["name"],
+                    instrument=s["instrument"],
+                    strategy=s["strategy"],
+                    timeframes=s.get("timeframes", ["D", "H4"]),
+                    poll_interval_seconds=s.get("poll_interval_seconds", 300),
+                    risk_per_trade_pct=s.get("risk_per_trade_pct", 1.0),
+                    max_concurrent_positions=s.get("max_concurrent_positions", 1),
+                    session_start_utc=s.get("session_start_utc", 7),
+                    session_end_utc=s.get("session_end_utc", 21),
+                    enabled=s.get("enabled", True),
+                )
+                for s in raw_streams
+            ]
+
+    # Backward compatibility: synthesize default stream from env vars
+    trade_pair = os.environ.get("TRADE_PAIR", "EUR_USD")
+    return [
+        StreamConfig(
+            name="default",
+            instrument=trade_pair,
+            strategy="sr_rejection",
+            timeframes=["D", "H4"],
+            poll_interval_seconds=300,
+            risk_per_trade_pct=float(os.environ.get("RISK_PER_TRADE_PCT", "1.0")),
+            max_concurrent_positions=1,
+            session_start_utc=int(os.environ.get("SESSION_START_UTC", "7")),
+            session_end_utc=int(os.environ.get("SESSION_END_UTC", "21")),
+            enabled=True,
+        )
+    ]
