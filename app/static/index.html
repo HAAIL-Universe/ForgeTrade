@@ -303,7 +303,18 @@
 
   // ── Update Functions ─────────────────────────────────────
 
-  function updateStatus(data) {
+  function updateStatus(raw) {
+    // /status returns {"streams": {"name": {...}, ...}}
+    var streams = raw.streams || {};
+    var keys = Object.keys(streams);
+
+    // Pick the first active stream for the header cards, or first stream
+    var data = {};
+    for (var i = 0; i < keys.length; i++) {
+      if (streams[keys[i]].running) { data = streams[keys[i]]; break; }
+    }
+    if (!data.mode && keys.length > 0) data = streams[keys[0]];
+
     // Mode badge
     var badge = $('mode-badge');
     var mode = (data.mode || 'idle').toLowerCase();
@@ -342,23 +353,32 @@
       cb.innerHTML = '<span class="cb-off">● OFF</span>';
     }
 
-    // Streams table (single stream for now)
+    // Streams table — render ALL streams
     var tbody = $('streams-body');
-    var streamName = data.stream_name || 'default';
-    var pair = data.pair || '—';
-    var cycle = data.cycle_count || 0;
-    var st = data.running ? 'active' : 'off';
-    var dotClass = st === 'active' ? 'dot-active' : 'dot-off';
-    var lastSig = data.last_signal_time ? fmtTime(data.last_signal_time) : '—';
+    if (keys.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No streams configured</td></tr>';
+      return;
+    }
 
-    tbody.innerHTML =
-      '<tr>' +
-      '<td>' + streamName + '</td>' +
-      '<td class="mono">' + pair.replace('_', '/') + '</td>' +
-      '<td class="mono">' + cycle + '</td>' +
-      '<td><span class="dot ' + dotClass + '"></span>' + st + '</td>' +
-      '<td class="mono">' + lastSig + '</td>' +
-      '</tr>';
+    var html = '';
+    for (var j = 0; j < keys.length; j++) {
+      var s = streams[keys[j]];
+      var sName = s.stream_name || keys[j];
+      var pair = s.pair || '—';
+      var cycle = s.cycle_count || 0;
+      var st = s.running ? 'active' : 'off';
+      var dotClass = st === 'active' ? 'dot-active' : 'dot-off';
+      var lastSig = s.last_signal_time ? fmtTime(s.last_signal_time) : '—';
+      html +=
+        '<tr>' +
+        '<td>' + sName + '</td>' +
+        '<td class="mono">' + pair.replace('_', '/') + '</td>' +
+        '<td class="mono">' + cycle + '</td>' +
+        '<td><span class="dot ' + dotClass + '"></span>' + st + '</td>' +
+        '<td class="mono">' + lastSig + '</td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = html;
   }
 
   function updatePositions(data) {
