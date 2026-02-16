@@ -1,7 +1,8 @@
-"""Trend-Confirmed Micro-Scalp strategy for XAU_USD.
+"""Momentum-Bias Micro-Scalp strategy for XAU_USD.
 
-Implements ``StrategyProtocol``.  Uses H1 trend detection, M1 pullback
-logic, S5 precision timing, and scalp-specific SL/TP calculations.
+Implements ``StrategyProtocol``.  Uses M1 momentum bias detection,
+M1 EMA(9) pullback logic, S5 precision timing, and scalp-specific
+SL/TP calculations.
 """
 
 from typing import Optional
@@ -10,19 +11,18 @@ from app.risk.scalp_sl_tp import calculate_scalp_sl, calculate_scalp_tp
 from app.strategy.base import StrategyProtocol, StrategyResult
 from app.strategy.models import CandleData, EntrySignal, INSTRUMENT_PIP_VALUES, SRZone
 from app.strategy.scalp_signals import ScalpEntrySignal, evaluate_scalp_entry
-from app.strategy.trend import detect_trend
+from app.strategy.trend import detect_scalp_bias, detect_trend
 
 
 class TrendScalpStrategy:
-    """Trend-confirmed scalp strategy for fast timeframes.
+    """Momentum-bias scalp strategy for fast timeframes.
 
     Flow:
-        1. Fetch 50× H1 candles → detect trend.
+        1. Fetch 20× M1 candles → detect momentum bias + pullback check.
         2. If flat → return None.
-        3. Fetch 20× M1 candles → check pullback to EMA(9).
-        4. Fetch 5× S5 candles → check spread + confirmation pattern.
-        5. Calculate scalp SL (swing structure) and TP (fixed R:R).
-        6. Return StrategyResult.
+        3. Fetch 20× S5 candles → check spread + confirmation pattern.
+        4. Calculate scalp SL (swing structure) and TP (fixed R:R).
+        5. Return StrategyResult.
     """
 
     MAX_SPREAD_PIPS: float = 8.0
@@ -54,45 +54,22 @@ class TrendScalpStrategy:
             "risk_calculated": False,
         }
         self.last_insight = {
-            "strategy": "Trend-Confirmed Scalp",
+            "strategy": "Momentum Scalp",
             "pair": instrument,
             "checks": checks,
         }
 
-        # 1 ── M5 trend detection (scalp-speed, fast EMAs)
-        m5_raw = await broker.fetch_candles(instrument, "M5", count=30)
-        m5_candles = [
+        # 1 ── M1 candles (used for BOTH bias detection AND pullback)
+        m1_raw = await broker.fetch_candles(instrument, "M1", count=20)
+        m1_candles = [
             CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
-            for c in m5_raw
+            for c in m1_raw
         ]
-        trend = detect_trend(m5_candles, ema_fast=9, ema_slow=21)
 
-        # Fallback: if M5 is flat, check M15 with standard EMAs
-        if trend.direction == "flat":
-            m15_raw = await broker.fetch_candles(instrument, "M15", count=50)
-            m15_candles = [
-                CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
-                for c in m15_raw
-            ]
-            trend = detect_trend(m15_candles, ema_fast=9, ema_slow=21)
-
-        # Second fallback: if still flat, use EMA slope direction on M5
-        # (EMAs aligned but price between them — still a usable bias)
-        if trend.direction == "flat" and len(m5_candles) >= 21:
-            from app.strategy.indicators import calculate_ema as _ema_calc
-            fast_v = _ema_calc(m5_candles, 9)
-            slow_v = _ema_calc(m5_candles, 21)
-            if fast_v and slow_v:
-                slope = fast_v[-1] - slow_v[-1]
-                # If slope is meaningful (> 0.5 for gold ≈ $0.50 separation)
-                if abs(slope) > 0.5:
-                    from app.strategy.trend import TrendState
-                    trend = TrendState(
-                        direction="bullish" if slope > 0 else "bearish",
-                        ema_fast_value=fast_v[-1],
-                        ema_slow_value=slow_v[-1],
-                        slope=slope,
-                    )
+        # 1a ── Momentum bias (replaces M5/M15 EMA crossover)
+        trend = detect_scalp_bias(
+            m1_candles, lookback=15, pip_value=pip_value,
+        )
 
         self.last_insight["trend"] = {
             "direction": trend.direction,
@@ -100,46 +77,33 @@ class TrendScalpStrategy:
             "ema_slow": round(trend.ema_slow_value, 2),
             "slope": round(trend.slope, 4),
         }
+        self.last_insight["bias_method"] = "M1 momentum"
 
         # 1b ── Multi-timeframe trend snapshot for dashboard cycling
         multi_tf_trends = {}
         for tf_gran, tf_label in [("S5", "S5"), ("M1", "M1"), ("M5", "M5"),
                                    ("M15", "M15"), ("M30", "M30"), ("H1", "H1")]:
             try:
-                if tf_gran == "H1":
-                    # Re-use already fetched H1 trend
-                    multi_tf_trends[tf_label] = {
-                        "direction": trend.direction,
-                        "slope": round(trend.slope, 4),
-                    }
-                else:
-                    tf_raw = await broker.fetch_candles(instrument, tf_gran, count=50)
-                    tf_candles = [
-                        CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
-                        for c in tf_raw
-                    ]
-                    tf_trend = detect_trend(tf_candles)
-                    multi_tf_trends[tf_label] = {
-                        "direction": tf_trend.direction,
-                        "slope": round(tf_trend.slope, 4),
-                    }
+                tf_raw = await broker.fetch_candles(instrument, tf_gran, count=50)
+                tf_candles = [
+                    CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
+                    for c in tf_raw
+                ]
+                tf_trend = detect_trend(tf_candles)
+                multi_tf_trends[tf_label] = {
+                    "direction": tf_trend.direction,
+                    "slope": round(tf_trend.slope, 4),
+                }
             except Exception:
                 multi_tf_trends[tf_label] = {"direction": "unknown", "slope": 0}
         self.last_insight["multi_tf_trends"] = multi_tf_trends
 
         if trend.direction == "flat":
-            self.last_insight["result"] = "no_trend"
+            self.last_insight["result"] = "no_bias"
             return None
         checks["trend_detected"] = True
 
-        # 2 ── M1 pullback and confirmation
-        m1_raw = await broker.fetch_candles(instrument, "M1", count=20)
-        m1_candles = [
-            CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
-            for c in m1_raw
-        ]
-
-        # 3 ── S5 precision timing + spread check
+        # 2 ── S5 precision timing + spread check
         s5_raw = await broker.fetch_candles(instrument, "S5", count=20)
         s5_candles = [
             CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
@@ -170,7 +134,7 @@ class TrendScalpStrategy:
                 return None
         checks["spread_acceptable"] = True
 
-        # 4 ── Evaluate scalp entry (with-trend or counter-trend)
+        # 3 ── Evaluate scalp entry (with-bias only)
         entry_signal = evaluate_scalp_entry(m1_candles, s5_candles, trend)
         if entry_signal is None:
             # Determine which sub-check failed for insight
@@ -181,8 +145,6 @@ class TrendScalpStrategy:
                 price = m1_candles[-1].close
                 self.last_insight["ema9"] = round(ema_cur, 2)
                 self.last_insight["price_vs_ema"] = round(price - ema_cur, 2)
-                # With counter-trend now allowed, if we still got None it
-                # means neither with-trend pullback nor reversal pattern fired
                 self.last_insight["result"] = "no_confirmation_pattern"
             else:
                 self.last_insight["result"] = "no_data"
@@ -196,7 +158,7 @@ class TrendScalpStrategy:
             "reason": entry_signal.reason,
         }
 
-        # 5 ── Calculate SL and TP
+        # 4 ── Calculate SL and TP
         sl = calculate_scalp_sl(
             entry_price=entry_signal.entry_price,
             direction=entry_signal.direction,

@@ -1026,7 +1026,7 @@ function saveSettings() {
     el.innerHTML =
       checkHtml('chk-circuit', 'Circuit Breaker') +
       checkHtml('chk-session', 'Session Window') +
-      checkHtml('chk-trend', 'Trend (M5)') +
+      checkHtml('chk-trend', 'Bias (M1)') +
       checkHtml('chk-spread', 'Spread Filter') +
       checkHtml('chk-pullback', 'EMA Pullback') +
       checkHtml('chk-confirm', 'Candle Pattern') +
@@ -1102,12 +1102,12 @@ function saveSettings() {
     }
     html += '</div>';
 
-    // Primary trend EMAs (always visible)
+    // Primary bias values (always visible)
     if (ins.trend) {
       html += '<div style="margin-top:8px; padding-top:6px; border-top:1px solid #21262d;">';
-      html += '<div class="insight-stat"><span class="insight-stat-label">Trend: EMA(9)</span>' +
+      html += '<div class="insight-stat"><span class="insight-stat-label">Bias: latest</span>' +
         '<span class="insight-stat-value mono">' + ins.trend.ema_fast + '</span></div>';
-      html += '<div class="insight-stat"><span class="insight-stat-label">Trend: EMA(21)</span>' +
+      html += '<div class="insight-stat"><span class="insight-stat-label">Bias: window start</span>' +
         '<span class="insight-stat-value mono">' + ins.trend.ema_slow + '</span></div>';
       html += '</div>';
     }

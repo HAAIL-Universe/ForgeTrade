@@ -696,4 +696,293 @@ Phase 10: Trend-Scalp Strategy ← requires 8 + 9
 
 ---
 
+## Phase 11 — Momentum Bias Refactor (Scalp Trend Gate Overhaul)
+
+### A) Purpose and Problem Statement
+
+The current trend detection system (`detect_trend()` in `app/strategy/trend.py`) uses a **dual-EMA crossover** with a strict triple-gate:
+
+```
+Bullish = EMA(fast) > EMA(slow) AND price > EMA(fast)
+Bearish = EMA(fast) < EMA(slow) AND price < EMA(fast)
+Flat    = everything else
+```
+
+This returns **"flat" approximately 40-50% of the time** on M5 gold, because price frequently sits between the two EMAs or crosses one but not the other. Each "flat" result means zero trades are allowed — the bot sits idle despite valid pullback+confirmation setups being available.
+
+The consequence: **half of all potential trades are locked out** by a trend gate that is too slow and too strict for micro-scalping.
+
+#### What a ~66% Win-Rate Quant Scalper Actually Needs
+
+A professional scalping bot targeting 66% accuracy doesn't need to know "is the market in a trend" — it needs to know **"what direction is price leaning right now"**. The difference is fundamental:
+
+| Aspect | Current (EMA Crossover) | Target (Momentum Bias) |
+|---|---|---|
+| **Question answered** | "Is the market in a multi-hour trend?" | "What direction has price been moving for the last 15 minutes?" |
+| **Lookback** | 30× M5 candles (~2.5 hrs), with EMA lag adding more | 15× M1 candles (~15 minutes) |
+| **Method** | Dual EMA crossover + price above both | Majority candle direction + net price change |
+| **Flat rate** | ~40-50% of observations | ~5-10% (only when genuinely directionless) |
+| **Bias flip speed** | Slow — takes multiple M5 candles to cross back | Fast — flips within 2-3 minutes of reversal |
+| **Counter-trend need** | Yes, because trends last hours and you miss reversals | No — bias flips fast enough that you're always "with bias" |
+
+#### Design Rationale
+
+The edge in a scalp is **not** in predicting direction over the next hour — it's in:
+1. **Entering pullbacks within the current micro-move** (the M1 EMA(9) proximity check — this stays)
+2. **Having a confirmation candle** (engulfing, hammer, pin bar — this stays)
+3. **Having a directional lean** so you're not flipping a coin (this is what bias provides)
+
+The bias just needs to answer: "over the last ~15 minutes, is gold moving up or down?" If 9 out of 15 candles are bullish and net price change is positive, that's a bullish bias. You buy pullbacks to EMA(9). If the market reverses, the bias flips within minutes — you start selling pullbacks instead. No more "flat" lockout.
+
+#### Why Counter-Trend Path Becomes Unnecessary
+
+The current code has two entry paths:
+- **With-trend**: any confirmation pattern (6 patterns)
+- **Counter-trend**: strong reversal only (3 patterns — engulfing, hammer/star, pin bar)
+
+With momentum bias, there is no need for a separate counter-trend path because:
+- The bias itself flips when a reversal happens
+- A hammer at a swing low will appear when bias is already flipping to bullish
+- By the time a reversal is "strong enough" to fire counter-trend, the 15-candle window has already shifted
+
+Removing counter-trend simplifies the code and eliminates the risk of entering against a genuine move.
+
+### B) Current Constraints / Starting State
+
+- `detect_trend()` exists in `app/strategy/trend.py` — a generic function also used by the multi-TF dashboard panel
+- `TrendScalpStrategy` in `app/strategy/trend_scalp.py` calls `detect_trend()` with M5 data (fast=9, slow=21)
+  - Has a three-tier fallback: M5 → M15 → EMA slope bias
+  - Each fallback adds API calls and latency
+- `evaluate_scalp_entry()` in `app/strategy/scalp_signals.py` has two paths: with-trend and counter-trend
+- Counter-trend path uses `_has_strong_buy()` / `_has_strong_sell()` helper functions
+- Dashboard shows "Trend (M5)" label and multi-TF trend cycling
+- Tests in `tests/test_trend_scalp.py` test both trend detection and counter-trend entries
+- `detect_trend()` is **not** used by the SR-rejection swing strategy (no impact on that stream)
+- Multi-TF trend snapshot (dashboard cycling) calls `detect_trend()` with default 21/50 EMAs — purely informational, unaffected by this change
+
+### C) Scope
+
+#### Constraints
+- The existing `detect_trend()` function is **NOT modified** — it remains available for the multi-TF dashboard panel and potential future swing use.
+- A **new** function `detect_scalp_bias()` is created alongside it.
+- Counter-trend entry path is **removed** from `evaluate_scalp_entry()`.
+- All confirmation patterns remain unchanged.
+- M1 EMA(9) pullback proximity check remains unchanged.
+- SL/TP calculation remains unchanged.
+- Position sizing, order placement, spread filter — all unchanged.
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **Momentum bias function** | `app/strategy/trend.py` | New function `detect_scalp_bias(candles_m1, lookback=15, bullish_threshold=0.6, min_net_pips=1.0, pip_value=0.01) -> TrendState`. Returns same `TrendState` dataclass for compatibility. |
+| 2 | **Remove M5/M15 trend fetch** | `app/strategy/trend_scalp.py` | Step 1 changes: instead of fetching M5 (30 candles) + M15 fallback + EMA slope fallback, just use the M1 candles (already fetched in step 2) passed to `detect_scalp_bias()`. |
+| 3 | **Merge step 1 and 2** | `app/strategy/trend_scalp.py` | Currently: Step 1 = fetch M5 for trend, Step 2 = fetch M1 for pullback. New: Step 1 = fetch M1 (used for both bias detection AND pullback check). Eliminates one API call per cycle. |
+| 4 | **Remove counter-trend path** | `app/strategy/scalp_signals.py` | Delete `_has_strong_buy()`, `_has_strong_sell()`, and the "COUNTER-TREND entry" section from `evaluate_scalp_entry()`. The function now only enters with-bias. |
+| 5 | **Update insight labels** | `app/strategy/trend_scalp.py` | `self.last_insight["strategy"]` → `"Momentum Scalp"`. Trend dict key `"direction"` remains (dashboard reads it). Add `"bias_method": "M1 momentum"` to insight. |
+| 6 | **Update dashboard label** | `app/static/index.html` | Checklist item changes from `"Trend (M5)"` to `"Bias (M1)"`. EMA labels change from `"Trend: EMA(9)"` / `"Trend: EMA(21)"` to `"Bias: bullish"` / `"Bias: bearish"`. |
+| 7 | **Update tests** | `tests/test_trend_scalp.py` | New tests for `detect_scalp_bias()`. Remove/update counter-trend test. Update with-trend tests to use bias function. |
+| 8 | **Update docstrings** | Multiple files | Update module and function docstrings to reflect momentum bias instead of EMA crossover trend. |
+
+### D) `detect_scalp_bias()` — Detailed Specification
+
+```python
+def detect_scalp_bias(
+    candles_m1: list[CandleData],
+    lookback: int = 15,
+    bullish_threshold: float = 0.6,
+    min_net_pips: float = 1.0,
+    pip_value: float = 0.01,
+) -> TrendState:
+```
+
+#### Input
+- `candles_m1`: M1 candle history, oldest-first. Needs at least `lookback` candles.
+- `lookback`: Number of recent candles to analyse (default 15 = 15 minutes).
+- `bullish_threshold`: Fraction of candles that must be bullish/bearish to confirm bias (default 0.60 = 60%).
+- `min_net_pips`: Minimum net price change (in pips) to break a tie (default 1.0 pip = $0.10 on gold).
+- `pip_value`: Pip size for the instrument (default 0.01 for XAU_USD).
+
+#### Algorithm
+
+```
+Given the last `lookback` M1 candles:
+
+1. Count bullish candles (close > open) and bearish candles (close < open).
+   - Dojis (close == open) are neutral, don't count either way.
+
+2. Calculate net price change = last_close - first_open (over the lookback window).
+
+3. Determine direction:
+   a. If bullish_count / total >= bullish_threshold AND net_change > 0:
+      → "bullish"
+   b. If bearish_count / total >= bullish_threshold AND net_change < 0:
+      → "bearish"
+   c. Tiebreaker — if neither threshold met but net change is significant:
+      - If abs(net_change) >= min_net_pips * pip_value:
+        → direction of net_change ("bullish" if positive, "bearish" if negative)
+      - Else:
+        → "flat"
+
+4. Compute pseudo-slope = net_change / pip_value (in pips, for dashboard display).
+
+5. Return TrendState(direction, ema_fast_value=last_close, ema_slow_value=first_open, slope=pseudo_slope).
+   - ema_fast_value and ema_slow_value are repurposed to carry the price window
+     endpoints (for dashboard display compatibility).
+```
+
+#### Example Scenarios
+
+| Scenario | Bullish/Bearish Count | Net Change | Result |
+|----------|----------------------|------------|--------|
+| 10 of 15 bullish, gold up $1.50 | 67% bullish | +$1.50 (+150 pips) | **bullish** |
+| 9 of 15 bearish, gold down $0.80 | 60% bearish | -$0.80 (-80 pips) | **bearish** |
+| 8 of 15 bullish, gold up $0.05 | 53% bullish | +$0.05 (+5 pips) | **bullish** (tiebreaker: net > 1 pip) |
+| 8 of 15 bullish, gold down $0.02 | 53% bullish | -$0.02 (-2 pips) | **bearish** (tiebreaker: net is negative and > 1 pip) |
+| 7 of 14 bullish (1 doji), gold flat $0.005 | 50/50 | +$0.005 (<1 pip) | **flat** (rare) |
+| 11 of 15 bearish, gold up $0.20 | 73% bearish | +$0.20 | **flat** (conflict: candles say bearish but net is up — wait) |
+
+**Conflict handling** (row 6 above): If candle majority says one direction but net price change says the opposite, return "flat". This protects against choppy whipsaw markets where individual candles oscillate but the overall move is the opposite direction. This is the **only** scenario that produces "flat" other than a genuine 50/50 split.
+
+### E) Updated Strategy Flow
+
+```
+TrendScalpStrategy.evaluate(broker, config):
+│
+├── 1. Fetch 20× M1 candles (serves both bias AND pullback)
+│   └── detect_scalp_bias(m1_candles, lookback=15) → TrendState
+│   └── if bias == "flat" → return None
+│
+├── 2. M1 EMA(9) pullback proximity check (unchanged)
+│   └── price within 0.6% of EMA(9)
+│   └── if no pullback → return None
+│
+├── 3. Fetch 20× S5 candles → spread check (unchanged)
+│   └── min S5 range / pip_value > MAX_SPREAD_PIPS → return None
+│
+├── 4. Confirmation pattern check (unchanged)
+│   └── check M1 then S5 for: engulfing, hammer/star, pin bar,
+│       momentum (2× consecutive), single candle (body ≥ 40%)
+│   └── if no confirmation → return None
+│
+├── 5. Calculate scalp SL (swing structure — unchanged)
+│   └── SL = recent M1 swing low/high + buffer
+│
+├── 6. Calculate scalp TP (fixed R:R — unchanged)
+│   └── TP = entry ± (SL distance × 1.5)
+│
+└── return StrategyResult(signal, sl, tp, atr=None)
+```
+
+#### API Call Reduction
+
+| Step | Before (Phase 10) | After (Phase 11) |
+|------|-------------------|-------------------|
+| Trend/Bias | Fetch 30× M5 + fallback 50× M15 + EMA calc | **None** (uses M1 from step 2) |
+| Pullback | Fetch 20× M1 | Fetch 20× M1 (same) |
+| Spread/Confirm | Fetch 20× S5 | Fetch 20× S5 (same) |
+| Multi-TF dashboard | 5× fetch (S5, M1, M5, M15, M30) | 5× fetch (unchanged, informational) |
+| **Total per cycle** | **8-9 candle requests** | **7 candle requests** (minimum 1, usually 2 fewer) |
+
+### F) Affected Files — Detailed Change Map
+
+| File | Change Type | What Changes |
+|------|-------------|-------------|
+| `app/strategy/trend.py` | **Add function** | New `detect_scalp_bias()` function. Existing `detect_trend()` untouched. |
+| `app/strategy/trend_scalp.py` | **Refactor** | Step 1 replaced: remove M5/M15 fetch + EMA crossover fallback chain. Use M1 candles + `detect_scalp_bias()`. Remove import of `_ema_calc` for slope fallback. Update insight labels. Merge steps 1 and 2 to share M1 fetch. |
+| `app/strategy/scalp_signals.py` | **Simplify** | Remove `_has_strong_buy()`, `_has_strong_sell()` helper functions. Remove the entire "COUNTER-TREND entry" section from `evaluate_scalp_entry()`. Remove the `if trend.direction == "flat": return None` guard (bias handles this upstream). |
+| `app/static/index.html` | **Label update** | Change checklist item "Trend (M5)" → "Bias (M1)". Update EMA label references in the insight panel. |
+| `tests/test_trend_scalp.py` | **Update** | Add `test_bias_bullish`, `test_bias_bearish`, `test_bias_flat_split`, `test_bias_flat_conflict`, `test_bias_tiebreaker_net`. Update `test_scalp_counter_trend_buy_in_bearish` → remove (counter-trend no longer exists). Update strategy integration tests to use bias. |
+
+### G) Non-Goals (Explicitly Out of Scope)
+
+- **No change to `detect_trend()`** — the existing function stays for multi-TF dashboard and potential swing strategy use.
+- **No change to SL/TP logic** — swing structure SL and fixed R:R TP are unchanged.
+- **No change to position sizing or risk management** — `calculate_units()`, drawdown tracker, circuit breaker are unchanged.
+- **No change to the SR-rejection swing strategy** — this phase only affects the scalp pipeline.
+- **No change to order placement** — the pip_value, integer units, and price precision fixes from the previous commit are unchanged.
+- **No adaptive/ML tuning of bias parameters** — `lookback=15`, `threshold=0.6`, `min_net_pips=1.0` are hardcoded. Future phase could make these configurable via `forge.json`.
+- **No backtesting** — M1 historical data is limited; this is validated via forward-testing on practice.
+
+### H) Acceptance Criteria
+
+#### Functional
+
+1. `detect_scalp_bias()` returns `"bullish"` when ≥60% of last 15 M1 candles are bullish AND net price change is positive.
+2. `detect_scalp_bias()` returns `"bearish"` when ≥60% of last 15 M1 candles are bearish AND net price change is negative.
+3. `detect_scalp_bias()` returns `"flat"` when candle majority conflicts with net price direction (whipsaw protection).
+4. `detect_scalp_bias()` uses net price tiebreaker when neither side reaches 60% but net change exceeds 1 pip.
+5. `detect_scalp_bias()` returns `"flat"` when 50/50 split and net change < 1 pip.
+6. `evaluate_scalp_entry()` no longer has a counter-trend path — it only enters with-bias.
+7. `TrendScalpStrategy.evaluate()` fetches M1 candles once (shared between bias and pullback checks), not separately for M5 trend + M1 pullback.
+8. The multi-TF trend cycling dashboard panel continues to work (it uses `detect_trend()`, which is unchanged).
+9. The strategy insight panel shows "Momentum Scalp" as the strategy name and "Bias (M1)" labels.
+10. The bot fires trades when bias is bullish or bearish + pullback + confirmation — no more extended "flat" lockouts during active gold sessions.
+
+#### Unit Tests
+
+| Test Case | File | Asserts |
+|-----------|------|---------|
+| `test_bias_bullish` | `tests/test_trend_scalp.py` | 10/15 bullish candles + net positive → `"bullish"` |
+| `test_bias_bearish` | `tests/test_trend_scalp.py` | 10/15 bearish candles + net negative → `"bearish"` |
+| `test_bias_flat_5050` | `tests/test_trend_scalp.py` | 7/14 bullish (1 doji) + net < 1 pip → `"flat"` |
+| `test_bias_flat_conflict` | `tests/test_trend_scalp.py` | 11/15 bearish candles + net positive → `"flat"` (conflict) |
+| `test_bias_tiebreaker_net` | `tests/test_trend_scalp.py` | 8/15 bullish + net > 1 pip → direction of net change |
+| `test_bias_short_candles` | `tests/test_trend_scalp.py` | Fewer than `lookback` candles → `"flat"` (insufficient data) |
+| `test_scalp_buy_with_bias` | `tests/test_trend_scalp.py` | Bullish bias + pullback + confirmation → buy signal |
+| `test_scalp_sell_with_bias` | `tests/test_trend_scalp.py` | Bearish bias + pullback + confirmation → sell signal |
+| `test_no_counter_trend_entry` | `tests/test_trend_scalp.py` | Bullish bias + bearish engulfing → `None` (with-bias only) |
+| `test_strategy_uses_m1_for_bias` | `tests/test_trend_scalp.py` | Strategy does NOT fetch M5 candles for trend (verify mock call count) |
+
+### I) Verification Gates
+
+| Gate | Check |
+|------|-------|
+| **Static** | `python -m compileall app/` passes. No import errors. |
+| **Runtime** | App boots with micro-scalp stream enabled. Cycles run without errors. Bias detection fires on each cycle. |
+| **Behavior** | All new and updated tests pass. Existing test count stays at 143+ passing. |
+| **Contract** | `TrendScalpStrategy` still satisfies `StrategyProtocol`. Dashboard shows correct labels. Signal log records bias-based entries. |
+| **Regression** | SR-rejection swing strategy unaffected. `detect_trend()` function unchanged. Multi-TF dashboard panel unchanged. |
+
+### J) Operational Notes
+
+#### Tuning Guidance (Post-Deploy)
+
+After running on practice for 48-72 hours with the new bias system, evaluate:
+
+| Parameter | Default | If too few trades | If too many bad trades |
+|-----------|---------|-------------------|----------------------|
+| `lookback` | 15 (minutes) | Decrease to 10 | Increase to 20 |
+| `bullish_threshold` | 0.60 (60%) | Decrease to 0.55 | Increase to 0.65 |
+| `min_net_pips` | 1.0 ($0.10) | Decrease to 0.5 | Increase to 2.0 |
+| Pullback `0.6%` | 0.6% | Widen to 0.8% | Tighten to 0.4% |
+
+These parameters are hardcoded in Phase 11. A future phase could expose them in `forge.json` stream config.
+
+#### Expected Improvement
+
+| Metric | Before (EMA Crossover) | After (Momentum Bias) | Reasoning |
+|--------|----------------------|----------------------|-----------|
+| Flat rate | ~40-50% | ~5-10% | Only 50/50 splits or conflict yield flat |
+| Trades per session | 2-5 | 5-12 | More opportunities pass the bias gate |
+| Win rate | ~60% (theoretical) | ~62-66% | Same pullback+confirmation edge, fewer forced counter-trend entries |
+| API calls per cycle | 8-9 | 7 | No M5/M15 trend fetch |
+| Cycle time | ~3-4s | ~2-3s | Fewer API calls |
+
+### K) Build Steps (For Builder Reference)
+
+The builder should execute these steps in order:
+
+1. **Add `detect_scalp_bias()`** to `app/strategy/trend.py` — pure function, no side effects, fully testable in isolation.
+2. **Write bias unit tests** in `tests/test_trend_scalp.py` — all 6 bias tests should pass before touching the strategy.
+3. **Refactor `TrendScalpStrategy.evaluate()`** in `app/strategy/trend_scalp.py` — replace M5/M15 trend chain with M1 bias call. Merge steps 1+2 to share M1 fetch.
+4. **Remove counter-trend from `evaluate_scalp_entry()`** in `app/strategy/scalp_signals.py` — delete `_has_strong_buy`, `_has_strong_sell`, and the counter-trend section.
+5. **Update dashboard labels** in `app/static/index.html`.
+6. **Update/add integration tests** — verify strategy uses M1 for bias, no M5 fetch, no counter-trend entry.
+7. **Run full test suite** — 143+ passing, 1 pre-existing failure.
+8. **Boot and smoke test** — start bot, verify dashboard shows "Bias (M1)" and "Momentum Scalp", verify signal log shows bias-based entries.
+9. **Commit**.
+
+---
+
 *This plan was generated by the Forge Director. Each phase should be built, tested, and authorized sequentially before proceeding to the next.*

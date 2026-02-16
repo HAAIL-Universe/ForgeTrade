@@ -1,7 +1,7 @@
 """Scalp entry signal evaluation — pullback + confirmation on M1/S5.
 
-Only produces an entry when the higher-timeframe trend direction matches
-the M1 candlestick pattern.
+Only produces an entry when the momentum bias direction matches
+the M1 candlestick pattern.  With-bias entries only — no counter-trend.
 """
 
 from dataclasses import dataclass
@@ -153,15 +153,13 @@ def evaluate_scalp_entry(
 ) -> Optional[ScalpEntrySignal]:
     """Evaluate whether conditions are met for a scalp entry.
 
-    Supports both with-trend and counter-trend entries:
-        - **With trend**: price near EMA + any confirmation candle.
-        - **Counter-trend**: requires a strong reversal pattern
-          (engulfing, hammer/star, pin bar) — momentum alone is not enough.
+    Only enters with-bias.  If momentum bias is bullish, looks for buy
+    pullback setups.  If bearish, looks for sell setups.  No counter-trend.
 
     Args:
         candles_m1: M1 candle history, oldest-first.  Need >= pullback_ema_period + 2.
         candles_s5: S5 candle history, oldest-first.
-        trend: The higher-timeframe TrendState.
+        trend: The momentum bias ``TrendState``.
         pullback_ema_period: EMA period for pullback detection on M1.
 
     Returns:
@@ -190,32 +188,7 @@ def evaluate_scalp_entry(
                 pattern += " (S5)"
         return confirmed, pattern
 
-    # ── Helper: check for STRONG reversal only (no momentum/single candle)
-    def _has_strong_buy(candles):
-        if len(candles) < 2:
-            return False, ""
-        prev, curr = candles[-2], candles[-1]
-        if _is_bullish_engulfing(prev, curr):
-            return True, "bullish engulfing"
-        if _is_hammer(curr):
-            return True, "hammer"
-        if _is_bullish_pin_bar(curr):
-            return True, "bullish pin bar"
-        return False, ""
-
-    def _has_strong_sell(candles):
-        if len(candles) < 2:
-            return False, ""
-        prev, curr = candles[-2], candles[-1]
-        if _is_bearish_engulfing(prev, curr):
-            return True, "bearish engulfing"
-        if _is_shooting_star(curr):
-            return True, "shooting star"
-        if _is_bearish_pin_bar(curr):
-            return True, "bearish pin bar"
-        return False, ""
-
-    # ── WITH-TREND entry ──
+    # ── WITH-BIAS entry ──
     if trend.direction == "bullish":
         # Price should be near the EMA (within 0.6%)
         pullback_threshold = ema_current * 1.006
@@ -225,7 +198,7 @@ def evaluate_scalp_entry(
                 return ScalpEntrySignal(
                     direction="buy",
                     entry_price=last_close,
-                    reason=f"Trend-scalp buy: {pattern} at M1 EMA({pullback_ema_period}) pullback",
+                    reason=f"Bias-scalp buy: {pattern} at M1 EMA({pullback_ema_period}) pullback",
                 )
 
     elif trend.direction == "bearish":
@@ -236,29 +209,7 @@ def evaluate_scalp_entry(
                 return ScalpEntrySignal(
                     direction="sell",
                     entry_price=last_close,
-                    reason=f"Trend-scalp sell: {pattern} at M1 EMA({pullback_ema_period}) pullback",
+                    reason=f"Bias-scalp sell: {pattern} at M1 EMA({pullback_ema_period}) pullback",
                 )
-
-    # ── COUNTER-TREND entry (reversal at extremes) ──
-    # Only allowed with a strong reversal pattern — no momentum/single candle
-    if trend.direction == "bullish":
-        # Look for sell reversal (price extended above EMA, showing weakness)
-        confirmed, pattern = _check_confirm(_has_strong_sell)
-        if confirmed:
-            return ScalpEntrySignal(
-                direction="sell",
-                entry_price=last_close,
-                reason=f"Counter-trend sell: {pattern} (reversal against bullish bias)",
-            )
-
-    elif trend.direction == "bearish":
-        # Look for buy reversal (price extended below EMA, showing strength)
-        confirmed, pattern = _check_confirm(_has_strong_buy)
-        if confirmed:
-            return ScalpEntrySignal(
-                direction="buy",
-                entry_price=last_close,
-                reason=f"Counter-trend buy: {pattern} (reversal against bearish bias)",
-            )
 
     return None

@@ -1,7 +1,8 @@
-"""Tests for Phase 10 — Trend-Confirmed Micro-Scalp Strategy.
+"""Tests for Trend-Scalp / Momentum-Bias Micro-Scalp Strategy.
 
-Covers: trend detection, scalp signals, scalp SL/TP, trailing stop, spread
-filter, position count guard, strategy registry, TrendScalpStrategy.
+Covers: trend detection (EMA crossover), momentum bias detection,
+scalp signals, scalp SL/TP, trailing stop, spread filter,
+position count guard, strategy registry, TrendScalpStrategy.
 """
 
 from dataclasses import dataclass
@@ -26,7 +27,7 @@ from app.strategy.scalp_signals import (
     _is_shooting_star,
 )
 from app.strategy.spread_filter import is_spread_acceptable
-from app.strategy.trend import TrendState, detect_trend
+from app.strategy.trend import TrendState, detect_trend, detect_scalp_bias
 from app.strategy.trend_scalp import TrendScalpStrategy
 
 
@@ -110,6 +111,88 @@ class TestTrendDetection:
         assert trend.ema_fast_value == 0.0
 
 
+# ── Momentum Bias Detection ────────────────────────────────────────────────
+
+
+class TestMomentumBias:
+    def test_bias_bullish(self):
+        """10/15 bullish candles + net positive → bullish."""
+        prices = []
+        for i in range(15):
+            base = 2050 + i * 0.3
+            if i < 10:  # 10 bullish
+                prices.append((base, base + 0.5, base - 0.1, base + 0.2))
+            else:  # 5 bearish
+                prices.append((base + 0.2, base + 0.3, base - 0.1, base))
+        candles = _make_candles(prices)
+        bias = detect_scalp_bias(candles, lookback=15, pip_value=0.01)
+        assert bias.direction == "bullish"
+        assert bias.slope > 0
+
+    def test_bias_bearish(self):
+        """10/15 bearish candles + net negative → bearish."""
+        prices = []
+        for i in range(15):
+            base = 2060 - i * 0.3
+            if i < 10:  # 10 bearish
+                prices.append((base, base + 0.1, base - 0.5, base - 0.2))
+            else:  # 5 bullish
+                prices.append((base - 0.2, base + 0.1, base - 0.3, base))
+        candles = _make_candles(prices)
+        bias = detect_scalp_bias(candles, lookback=15, pip_value=0.01)
+        assert bias.direction == "bearish"
+        assert bias.slope < 0
+
+    def test_bias_flat_5050(self):
+        """50/50 split + tiny net change → flat."""
+        prices = []
+        for i in range(15):
+            base = 2050.0
+            if i % 2 == 0:  # bullish
+                prices.append((base, base + 0.1, base - 0.05, base + 0.005))
+            else:  # bearish
+                prices.append((base + 0.005, base + 0.1, base - 0.05, base))
+        candles = _make_candles(prices)
+        bias = detect_scalp_bias(candles, lookback=15, pip_value=0.01)
+        assert bias.direction == "flat"
+
+    def test_bias_flat_conflict(self):
+        """11/15 bearish candles but net positive → flat (conflict)."""
+        # Many small bearish candles but price starts low and ends high
+        prices = []
+        for i in range(15):
+            if i < 11:  # bear candle but each one starts slightly higher
+                base = 2050 + i * 0.5
+                prices.append((base + 0.3, base + 0.4, base, base + 0.1))
+            else:  # big bull candles at end
+                base = 2050 + i * 0.5
+                prices.append((base, base + 2.0, base - 0.1, base + 1.8))
+        candles = _make_candles(prices)
+        bias = detect_scalp_bias(candles, lookback=15, pip_value=0.01)
+        assert bias.direction == "flat"
+
+    def test_bias_tiebreaker_net(self):
+        """Neither side reaches 60% but net change > 1 pip → use net."""
+        # 8 bullish, 7 bearish (53% bullish, < 60%), net positive > 1 pip
+        prices = []
+        for i in range(15):
+            base = 2050 + i * 0.2
+            if i < 8:  # bullish
+                prices.append((base, base + 0.5, base - 0.1, base + 0.3))
+            else:  # bearish
+                prices.append((base + 0.3, base + 0.4, base, base + 0.1))
+        candles = _make_candles(prices)
+        bias = detect_scalp_bias(candles, lookback=15, pip_value=0.01)
+        # Net is positive (price rising overall) → bullish tiebreaker
+        assert bias.direction == "bullish"
+
+    def test_bias_short_candles(self):
+        """Fewer than lookback candles → flat."""
+        candles = _make_candles([(2050, 2051, 2049, 2050)] * 5)
+        bias = detect_scalp_bias(candles, lookback=15, pip_value=0.01)
+        assert bias.direction == "flat"
+
+
 # ── Scalp Signals ────────────────────────────────────────────────────────
 
 
@@ -136,26 +219,24 @@ class TestScalpSignals:
         assert result.direction == "buy"
         assert "buy" in result.reason.lower()
 
-    def test_scalp_counter_trend_buy_in_bearish(self):
-        """Counter-trend buy allowed when strong reversal pattern in bearish trend."""
+    def test_scalp_counter_trend_blocked(self):
+        """No counter-trend entry — bearish engulfing in bullish bias returns None."""
         trend = TrendState(
-            direction="bearish", ema_fast_value=2040, ema_slow_value=2050, slope=-10,
+            direction="bullish", ema_fast_value=2050, ema_slow_value=2040, slope=10,
         )
-        # Create bullish engulfing pattern (strong reversal)
+        # Create bearish engulfing pattern far above EMA (no pullback)
         prices = []
         for i in range(12):
-            base = 2038 + i * 0.5
+            base = 2060 + i * 0.5
             prices.append((base, base + 0.5, base - 0.3, base + 0.2))
-        prices.append((2045.0, 2045.2, 2044.5, 2044.6))
-        prices.append((2044.5, 2046.0, 2044.4, 2045.5))
+        prices.append((2067.0, 2067.5, 2066.8, 2067.3))  # bullish
+        prices.append((2067.4, 2067.5, 2066.0, 2066.5))  # bearish engulfing
         candles_m1 = _make_candles(prices)
-        s5 = _make_candles([(2045.0, 2045.3, 2044.9, 2045.2)])
+        s5 = _make_candles([(2066.5, 2066.8, 2066.2, 2066.4)])
 
         result = evaluate_scalp_entry(candles_m1, s5, trend)
-        # Counter-trend buy allowed with strong reversal (bullish engulfing)
-        assert result is not None
-        assert result.direction == "buy"
-        assert "Counter-trend" in result.reason
+        # Counter-trend no longer exists — should be None
+        assert result is None
 
     def test_scalp_flat_trend_returns_none(self):
         """No signal when trend is flat."""
@@ -447,18 +528,19 @@ class TestStrategyRegistryPhase10:
 class TestTrendScalpStrategyInteg:
     @pytest.mark.asyncio
     async def test_strategy_returns_none_when_flat(self):
-        """Strategy returns None when H1 trend is flat."""
+        """Strategy returns None when M1 momentum bias is flat (oscillating)."""
         from app.broker.models import Candle
 
         broker = AsyncMock()
         import math
+        # Perfectly oscillating candles → 50/50 bullish/bearish, tiny net → flat
         flat_candles = [
             Candle(
-                time=f"2025-01-01T{i:02d}:00:00Z",
-                open=2050.0 + math.sin(i * 0.5) * 2,
-                high=2052.0 + math.sin(i * 0.5) * 2,
-                low=2048.0 + math.sin(i * 0.5) * 2,
-                close=2050.0 + math.sin(i * 0.5) * 1.5,
+                time=f"2025-01-01T00:{i:02d}:00Z",
+                open=2050.0,
+                high=2050.5,
+                low=2049.5,
+                close=2050.0 + (0.005 if i % 2 == 0 else -0.005),
                 volume=100,
                 complete=True,
             )
@@ -472,3 +554,35 @@ class TestTrendScalpStrategyInteg:
         strat = TrendScalpStrategy()
         result = await strat.evaluate(broker, config)
         assert result is None
+
+    @pytest.mark.asyncio
+    async def test_strategy_uses_m1_for_bias(self):
+        """Strategy fetches M1 for bias detection, not M5."""
+        from app.broker.models import Candle
+        from unittest.mock import call
+
+        broker = AsyncMock()
+        # Return oscillating candles that produce flat bias
+        flat_candles = [
+            Candle(
+                time=f"2025-01-01T00:{i:02d}:00Z",
+                open=2050.0,
+                high=2050.5,
+                low=2049.5,
+                close=2050.0 + (0.005 if i % 2 == 0 else -0.005),
+                volume=100,
+                complete=True,
+            )
+            for i in range(50)
+        ]
+        broker.fetch_candles.return_value = flat_candles
+
+        config = MagicMock()
+        config.trade_pair = "XAU_USD"
+
+        strat = TrendScalpStrategy()
+        await strat.evaluate(broker, config)
+
+        # The first fetch_candles call should be M1 (bias + pullback)
+        first_call = broker.fetch_candles.call_args_list[0]
+        assert first_call == call("XAU_USD", "M1", count=20)
