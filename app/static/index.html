@@ -326,6 +326,24 @@
   </div>
 </div>
 
+<!-- ── Signal Log ─────────────────────────────────────────── -->
+<div class="card collapsed" id="card-signal-log">
+  <div class="card-title" onclick="toggleCard('card-signal-log')">
+    <span>Signal Log</span>
+    <span class="count mono" id="signal-log-count">0</span>
+  </div>
+  <div class="card-body">
+  <table>
+    <thead>
+      <tr><th>Time</th><th>Pair</th><th>Dir</th><th>Status</th><th>Reason</th></tr>
+    </thead>
+    <tbody id="signal-log-body">
+      <tr class="empty-row"><td colspan="5">No signal history</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
 <!-- ── Strategy Insight ───────────────────────────────────── -->
 <div class="card" id="card-insight">
   <div class="card-title" onclick="toggleCard('card-insight')">
@@ -746,6 +764,33 @@ function saveSettings() {
       '</tr>';
   }
 
+  function updateSignalLog(data) {
+    var signals = data.signals || [];
+    var tbody = $('signal-log-body');
+    $('signal-log-count').textContent = signals.length;
+
+    if (signals.length === 0) {
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="5">No signal history</td></tr>';
+      return;
+    }
+
+    var html = '';
+    for (var i = 0; i < signals.length; i++) {
+      var sig = signals[i];
+      var t = sig.evaluated_at ? sig.evaluated_at.substring(11, 19) : '—';
+      var dirCls = sig.direction === 'buy' ? 'pnl-pos' : (sig.direction === 'sell' ? 'pnl-neg' : '');
+      html +=
+        '<tr>' +
+        '<td class="mono">' + t + '</td>' +
+        '<td>' + (sig.pair || '—').replace('_', '/') + '</td>' +
+        '<td class="' + dirCls + '">' + (sig.direction || '—').toUpperCase() + '</td>' +
+        '<td>' + (sig.status || '—') + '</td>' +
+        '<td>' + (sig.reason || '—') + '</td>' +
+        '</tr>';
+    }
+    tbody.innerHTML = html;
+  }
+
   function updateClosedTrades(data) {
     var trades = data.trades || [];
     var tbody = $('closed-body');
@@ -1108,13 +1153,15 @@ function saveSettings() {
       fetchJSON('/positions'),
       fetchJSON('/signals/pending'),
       fetchJSON('/trades/closed?limit=20'),
-      fetchJSON('/strategy/insight')
+      fetchJSON('/strategy/insight'),
+      fetchJSON('/signals/history')
     ]).then(function(results) {
       updateStatus(results[0]);
       updatePositions(results[1]);
       updateWatchlist(results[2]);
       updateClosedTrades(results[3]);
       updateInsight(results[4]);
+      updateSignalLog(results[5]);
       $('last-refresh').textContent = new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'UTC'}) + ' UTC';
     }).catch(function(err) {
       console.error('Poll error:', err);

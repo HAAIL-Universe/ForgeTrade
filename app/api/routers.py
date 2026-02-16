@@ -45,6 +45,7 @@ _trade_repo = None   # Set via configure_routers()
 _broker = None       # Set via configure_routers()
 _pending_signal = None  # Updated by engine after evaluate_signal()
 _strategy_insight: dict = {}  # Updated by engine each cycle
+_signal_history: list = []  # Recent signal log (max 50 entries)
 _engine_manager = None  # Set via configure_routers()
 _forge_json_path: Optional[pathlib.Path] = None  # Set via configure_routers()
 
@@ -113,9 +114,27 @@ def update_bot_status(stream_name: str = "default", **fields) -> None:
 
 
 def update_pending_signal(signal_data: Optional[dict]) -> None:
-    """Store the last evaluated signal for the watchlist endpoint."""
+    """Store the last evaluated signal for the watchlist endpoint.
+
+    Also appends to signal history log (signals with a direction only).
+    """
     global _pending_signal  # noqa: PLW0603
     _pending_signal = signal_data
+    # Log signals that have an actual direction (buy/sell)
+    if signal_data and signal_data.get("direction"):
+        entry = {
+            "pair": signal_data.get("pair", ""),
+            "direction": signal_data["direction"],
+            "status": signal_data.get("status", ""),
+            "reason": signal_data.get("reason", ""),
+            "zone_price": signal_data.get("zone_price"),
+            "evaluated_at": signal_data.get("evaluated_at", ""),
+            "stream_name": signal_data.get("stream_name", ""),
+        }
+        _signal_history.append(entry)
+        # Cap at 50 entries
+        if len(_signal_history) > 50:
+            del _signal_history[0]
 
 
 def update_strategy_insight(stream_name: str, insight: dict) -> None:
@@ -182,6 +201,16 @@ async def get_positions():
 async def get_pending_signals():
     """Return the last evaluated signal (watchlist)."""
     return {"signal": _pending_signal}
+
+
+@router.get("/signals/history")
+async def get_signal_history(
+    limit: int = Query(default=20, ge=1, le=50),
+):
+    """Return recent signal log (buy/sell signals that were evaluated)."""
+    recent = _signal_history[-limit:]
+    recent.reverse()  # newest first
+    return {"signals": recent}
 
 
 @router.get("/strategy/insight")

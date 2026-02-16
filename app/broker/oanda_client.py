@@ -170,16 +170,18 @@ class OandaClient:
             ``OrderResponse`` with the fill details.
         """
         url = f"{self._base_url}/v3/accounts/{self._account_id}/orders"
+        # Use appropriate price precision per instrument
+        _prec = 2 if "XAU" in order.instrument or "XAG" in order.instrument else 5
         body = {
             "order": {
                 "type": "MARKET",
                 "instrument": order.instrument,
-                "units": str(order.units),
+                "units": str(int(order.units)),
                 "stopLossOnFill": {
-                    "price": f"{order.stop_loss_price:.5f}",
+                    "price": f"{order.stop_loss_price:.{_prec}f}",
                 },
                 "takeProfitOnFill": {
-                    "price": f"{order.take_profit_price:.5f}",
+                    "price": f"{order.take_profit_price:.{_prec}f}",
                 },
             }
         }

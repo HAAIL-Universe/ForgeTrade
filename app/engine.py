@@ -193,6 +193,16 @@ class TradingEngine:
             except Exception as exc:
                 logger.error("Cycle %d error: %s", cycle, exc)
                 results.append({"action": "error", "reason": str(exc)})
+                # Push error into signal log so it's visible on dashboard
+                update_pending_signal({
+                    "pair": self.instrument,
+                    "direction": "—",
+                    "zone_price": None,
+                    "reason": f"ERROR: {exc}",
+                    "status": "error",
+                    "evaluated_at": datetime.now(timezone.utc).isoformat(),
+                    "stream_name": self.stream_name,
+                })
 
             if max_cycles > 0 and cycle >= max_cycles:
                 break
@@ -328,7 +338,12 @@ class TradingEngine:
             summary.equity,
             self._risk_pct,
             sl_pips,
+            pip_value=pip_value,
         )
+        # OANDA expects integer units for most instruments
+        units = int(units)
+        if units == 0:
+            units = 1  # minimum 1 unit
         if signal.direction == "sell":
             units = -units
 
