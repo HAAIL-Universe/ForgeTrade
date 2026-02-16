@@ -175,14 +175,17 @@
   .tab-dot-swing { background: #58a6ff; }
   .tab-dot-scalp { background: #f0883e; }
 
-  .tf-trend-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 4px; margin-bottom: 2px; transition: background 0.3s, box-shadow 0.3s; }
-  .tf-trend-row.tf-active { background: #1f6feb1a; box-shadow: inset 3px 0 0 #58a6ff; }
+  .tf-trend-row { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px; border-radius: 4px; margin-bottom: 2px; }
   .tf-trend-label { color: #8b949e; font-size: 12px; font-weight: 600; min-width: 40px; }
   .tf-trend-dir { font-size: 13px; font-weight: 700; }
-  .tf-trend-slope { font-size: 11px; color: #6e7681; }
   .tf-bullish { color: #3fb950; }
   .tf-bearish { color: #f85149; }
   .tf-flat { color: #d29922; }
+  .tf-trend-header { cursor: pointer; user-select: none; }
+  .tf-trend-header:hover { color: #c9d1d9; }
+  .tf-expanded .tf-trend-row { display: flex !important; }
+  #tf-trend-list:not(.tf-expanded) .tf-trend-row { display: none; }
+  #tf-trend-list:not(.tf-expanded) .tf-trend-row.tf-visible { display: flex; }
   .tf-unknown { color: #484f58; }
 
   .insight-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
@@ -1037,22 +1040,21 @@ function saveSettings() {
   function renderScalpDetails(ins, el) {
     var html = '';
 
-    // Multi-timeframe trend cycling display
+    // Multi-timeframe trend — single cycling row, click header to expand all
     var tfOrder = ['S5', 'M1', 'M5', 'M15', 'M30', 'H1'];
     var mtf = ins.multi_tf_trends || {};
-    html += '<div style="color:#8b949e; font-size:12px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;">Trend Analysis <span style="font-size:10px; color:#484f58;">(cycling)</span></div>';
+    html += '<div class="tf-trend-header" style="color:#8b949e; font-size:12px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.5px;" onclick="window._toggleTfExpand()">Trend Analysis · <span id="tf-active-label">' + tfOrder[_tfCycleIdx % tfOrder.length] + '</span> <span style="font-size:10px; color:#484f58;">(click to expand)</span></div>';
     html += '<div id="tf-trend-list">';
     for (var ti = 0; ti < tfOrder.length; ti++) {
       var tf = tfOrder[ti];
       var tfd = mtf[tf] || {};
       var dir = tfd.direction || 'unknown';
       var cls = dir === 'bullish' ? 'tf-bullish' : dir === 'bearish' ? 'tf-bearish' : dir === 'flat' ? 'tf-flat' : 'tf-unknown';
-      var slope = tfd.slope !== undefined ? (tfd.slope >= 0 ? '+' : '') + tfd.slope : '';
       var arrow = dir === 'bullish' ? '▲' : dir === 'bearish' ? '▼' : dir === 'flat' ? '▬' : '?';
-      html += '<div class="tf-trend-row" data-tf="' + tf + '">';
+      var vis = (ti === (_tfCycleIdx % tfOrder.length)) ? ' tf-visible' : '';
+      html += '<div class="tf-trend-row' + vis + '" data-tf="' + tf + '">';
       html += '<span class="tf-trend-label mono">' + tf + '</span>';
       html += '<span class="tf-trend-dir mono ' + cls + '">' + arrow + ' ' + dir.toUpperCase() + '</span>';
-      html += '<span class="tf-trend-slope mono">' + slope + '</span>';
       html += '</div>';
     }
     html += '</div>';
@@ -1128,17 +1130,32 @@ function saveSettings() {
   // ── Timeframe trend cycling timer ────────────────────────
   var _tfCycleOrder = ['S5', 'M1', 'M5', 'M15', 'M30', 'H1'];
   var _tfCycleIdx = 0;
+  var _tfExpanded = false;
+  window._toggleTfExpand = function() {
+    _tfExpanded = !_tfExpanded;
+    var list = document.getElementById('tf-trend-list');
+    if (!list) return;
+    if (_tfExpanded) {
+      list.classList.add('tf-expanded');
+    } else {
+      list.classList.remove('tf-expanded');
+    }
+  };
   setInterval(function() {
+    if (_tfExpanded) return; // don't cycle when expanded
     var list = document.getElementById('tf-trend-list');
     if (!list) return;
     var rows = list.querySelectorAll('.tf-trend-row');
     if (rows.length === 0) return;
-    // Remove all active
-    for (var r = 0; r < rows.length; r++) rows[r].classList.remove('tf-active');
-    // Advance and highlight
+    // Hide all rows
+    for (var r = 0; r < rows.length; r++) rows[r].classList.remove('tf-visible');
+    // Advance and show one
     _tfCycleIdx = (_tfCycleIdx + 1) % _tfCycleOrder.length;
     var target = list.querySelector('[data-tf="' + _tfCycleOrder[_tfCycleIdx] + '"]');
-    if (target) target.classList.add('tf-active');
+    if (target) target.classList.add('tf-visible');
+    // Update header label
+    var label = document.getElementById('tf-active-label');
+    if (label) label.textContent = _tfCycleOrder[_tfCycleIdx];
   }, 3000);
 
   // Load current settings once
