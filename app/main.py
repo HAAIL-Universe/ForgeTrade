@@ -39,6 +39,32 @@ async def lifespan(application: FastAPI):
 
     manager = None
     try:
+        # Check DASHBOARD_ONLY early — skip heavy imports entirely
+        dashboard_only = os.environ.get("DASHBOARD_ONLY", "").lower() in ("1", "true", "yes")
+
+        if dashboard_only:
+            # Minimal startup: just DB + trade repo for the API, no broker/engines
+            from app.config import load_config
+            from app.repos.db import init_db
+            from app.repos.trade_repo import TradeRepo
+            from app.api.routers import configure_routers
+
+            config = load_config()
+            db_dir = pathlib.Path(config.db_path).parent
+            db_dir.mkdir(parents=True, exist_ok=True)
+            init_db(config.db_path)
+
+            forge_json_path = pathlib.Path(__file__).resolve().parent.parent / "forge.json"
+            trade_repo = TradeRepo(config.db_path)
+            configure_routers(
+                trade_repo=trade_repo,
+                forge_json_path=forge_json_path,
+            )
+            logger.info("DASHBOARD_ONLY mode — serving dashboard only, no engines.")
+            yield
+            return
+
+        # Full startup: broker + engines + trading loop
         from app.broker.oanda_client import OandaClient
         from app.config import load_config, load_streams
         from app.engine_manager import EngineManager
@@ -78,19 +104,12 @@ async def lifespan(application: FastAPI):
                 running=False,
             )
 
-        # Launch engines unless DASHBOARD_ONLY mode (e.g. Render free tier)
-        dashboard_only = os.environ.get("DASHBOARD_ONLY", "").lower() in ("1", "true", "yes")
-        if dashboard_only:
-            logger.info(
-                "DASHBOARD_ONLY mode — %d stream(s) configured but engines NOT started.",
-                len(manager.stream_names),
-            )
-        else:
-            _engine_task = asyncio.create_task(manager.run_all())
-            logger.info(
-                "ForgeTrade lifespan started — %d stream(s) launched.",
-                len(manager.stream_names),
-            )
+        # Launch engines in the background so the API server stays responsive
+        _engine_task = asyncio.create_task(manager.run_all())
+        logger.info(
+            "ForgeTrade lifespan started — %d stream(s) launched.",
+            len(manager.stream_names),
+        )
 
         yield  # ← app is running
 
