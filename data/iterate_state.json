@@ -1,8 +1,5 @@
 {
-  "instrument": "XAU_USD",
-  "total_timesteps": 200000,
-  "parameters": 20771,
-  "seed": 43,
+  "iteration": 1,
   "env_config": {
     "instrument": "XAU_USD",
     "pip_value": 0.01,
@@ -39,8 +36,17 @@
     "reward_min": -2.0,
     "reward_max": 2.0
   },
-  "model_paths": {
-    "best": "models\\forge_agent\\best_model.zip",
-    "final": "models\\forge_agent\\final_model"
-  }
+  "nudge_history": [
+    {
+      "iteration": 1,
+      "param": "ema_pullback_period",
+      "direction": -1,
+      "old_value": 9,
+      "new_value": 8,
+      "reason": "High-spread losses \u2192 faster EMA for tighter pullback entry",
+      "reverted": false
+    }
+  ],
+  "best_avg_r": 0.0,
+  "best_iteration": 1
 }

@@ -577,5 +577,79 @@
         }
       ]
     }
+  },
+  {
+    "timestamp": "2026-02-20T07:36:19.008350+00:00",
+    "label": "iter-1-ema_pullback_period",
+    "model_path": "models/forge_agent/best_model.zip",
+    "instrument": "XAU_USD",
+    "parameters": 20771,
+    "training_timesteps": 200000,
+    "eval_episodes": 10,
+    "metrics": {
+      "win_rate": 0.0,
+      "take_rate": 0.0,
+      "profit_factor": 0.0,
+      "max_drawdown": 0.0,
+      "avg_r_multiple": 0.0,
+      "sharpe_ratio": 3300000.0,
+      "mean_episode_reward": 3.3,
+      "total_trades_taken": 0,
+      "total_signals_seen": 140
+    },
+    "failures": {
+      "total_signals": 140,
+      "total_taken": 0,
+      "total_vetoed": 140,
+      "total_wins": 0,
+      "total_losses": 0,
+      "failure_clusters": []
+    },
+    "iteration": 1,
+    "nudge": {
+      "iteration": 1,
+      "param": "ema_pullback_period",
+      "direction": -1,
+      "old_value": 9,
+      "new_value": 8,
+      "reason": "High-spread losses \u2192 faster EMA for tighter pullback entry",
+      "reverted": false
+    },
+    "env_config": {
+      "instrument": "XAU_USD",
+      "pip_value": 0.01,
+      "episode_length_days": 5,
+      "max_steps_per_episode": 200,
+      "max_hold_minutes": 120,
+      "risk_per_trade_pct": 2.0,
+      "initial_equity": 10000.0,
+      "max_drawdown_pct": 10.0,
+      "rr_ratio": 3.0,
+      "bias_lookback": 15,
+      "ema_pullback_period": 8,
+      "atr_period": 14,
+      "rsi_period": 14,
+      "bb_period": 20,
+      "bb_std": 2.0
+    },
+    "reward_config": {
+      "correct_veto_reward": 0.3,
+      "missed_winner_penalty": -0.15,
+      "ideal_hold_max": 30,
+      "moderate_hold_max": 60,
+      "long_hold_max": 120,
+      "moderate_hold_penalty": -0.05,
+      "long_hold_penalty": -0.15,
+      "time_exit_penalty": -0.3,
+      "dd_warning_threshold": 3.0,
+      "dd_danger_threshold": 5.0,
+      "dd_warning_multiplier": 2.0,
+      "dd_danger_multiplier": 3.0,
+      "losing_streak_extra_penalty": -0.15,
+      "winning_streak_bonus": 0.1,
+      "streak_lookback": 3,
+      "reward_min": -2.0,
+      "reward_max": 2.0
+    }
   }
 ]

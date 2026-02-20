@@ -1,9 +1,9 @@
 {
   "iteration": 1,
-  "phase": "training",
-  "detail": "Training 200,000 timesteps\u2026",
-  "best_avg_r": -999.0,
-  "best_iteration": 0,
+  "phase": "idle",
+  "detail": "Finished",
+  "best_avg_r": 0.0,
+  "best_iteration": 1,
   "last_nudge": {
     "iteration": 1,
     "param": "ema_pullback_period",
@@ -13,5 +13,5 @@
     "reason": "High-spread losses \u2192 faster EMA for tighter pullback entry",
     "reverted": false
   },
-  "updated_at": "2026-02-20T07:16:46.797510+00:00"
+  "updated_at": "2026-02-20T07:36:19.038184+00:00"
 }
