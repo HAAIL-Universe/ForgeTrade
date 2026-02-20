@@ -78,12 +78,19 @@ async def lifespan(application: FastAPI):
                 running=False,
             )
 
-        # Launch engines in the background so the API server stays responsive
-        _engine_task = asyncio.create_task(manager.run_all())
-        logger.info(
-            "ForgeTrade lifespan started — %d stream(s) launched.",
-            len(manager.stream_names),
-        )
+        # Launch engines unless DASHBOARD_ONLY mode (e.g. Render free tier)
+        dashboard_only = os.environ.get("DASHBOARD_ONLY", "").lower() in ("1", "true", "yes")
+        if dashboard_only:
+            logger.info(
+                "DASHBOARD_ONLY mode — %d stream(s) configured but engines NOT started.",
+                len(manager.stream_names),
+            )
+        else:
+            _engine_task = asyncio.create_task(manager.run_all())
+            logger.info(
+                "ForgeTrade lifespan started — %d stream(s) launched.",
+                len(manager.stream_names),
+            )
 
         yield  # ← app is running
 

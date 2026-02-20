@@ -17,4 +17,6 @@ services:
         sync: false
       - key: OANDA_ENVIRONMENT
         value: practice
+      - key: DASHBOARD_ONLY
+        value: "true"
     healthCheckPath: /health
