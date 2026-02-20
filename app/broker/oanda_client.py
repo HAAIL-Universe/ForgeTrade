@@ -13,9 +13,11 @@ import httpx
 from app.broker.models import (
     AccountSummary,
     Candle,
+    ClosedTrade,
     OrderRequest,
     OrderResponse,
     Position,
+    Trade,
 )
 from app.config import Config
 
@@ -227,6 +229,34 @@ class OandaClient:
             )
         return positions
 
+    async def list_open_trades(self) -> list[Trade]:
+        """Return all open trades with SL/TP details."""
+        url = f"{self._base_url}/v3/accounts/{self._account_id}/openTrades"
+
+        resp = await self._request_with_retry("get", url)
+
+        trades: list[Trade] = []
+        for t in resp.json().get("trades", []):
+            sl_price = None
+            tp_price = None
+            if "stopLossOrder" in t:
+                sl_price = float(t["stopLossOrder"].get("price", 0))
+            if "takeProfitOrder" in t:
+                tp_price = float(t["takeProfitOrder"].get("price", 0))
+            trades.append(
+                Trade(
+                    trade_id=t["id"],
+                    instrument=t["instrument"],
+                    units=float(t["currentUnits"]),
+                    price=float(t["price"]),
+                    unrealized_pnl=float(t.get("unrealizedPL", "0")),
+                    stop_loss_price=sl_price,
+                    take_profit_price=tp_price,
+                    open_time=t.get("openTime", ""),
+                )
+            )
+        return trades
+
     async def close_position(self, instrument: str) -> dict:
         """Close all units of a position for the given instrument.
 
@@ -269,3 +299,146 @@ class OandaClient:
         resp = await self._request_with_retry("put", url, json=body)
 
         return resp.json()
+
+    async def list_closed_trades(self, count: int = 50) -> list[ClosedTrade]:
+        """Return recently closed trades with P&L and lifecycle data.
+
+        Enriches each trade with SL/TP prices from the opening transaction
+        and close reason from the closing transaction, since OANDA strips
+        order objects from closed trades.
+
+        Args:
+            count: Maximum number of closed trades to return.
+
+        Returns:
+            List of ``ClosedTrade`` objects, newest first.
+        """
+        url = f"{self._base_url}/v3/accounts/{self._account_id}/trades"
+        params = {"state": "CLOSED", "count": count}
+
+        resp = await self._request_with_retry("get", url, params=params)
+
+        raw_trades = resp.json().get("trades", [])
+        if not raw_trades:
+            return []
+
+        # ── Fetch transactions for SL/TP + close reason enrichment ───
+        sl_tp_map: dict[str, dict] = {}   # trade_id → {"sl": float|None, "tp": float|None}
+        close_reason_map: dict[str, str] = {}  # trade_id → reason string
+
+        try:
+            # Compute transaction ID range covering all trades
+            trade_ids = [int(t["id"]) for t in raw_trades]
+            closing_ids: list[int] = []
+            for t in raw_trades:
+                closing_ids.extend(
+                    int(cid) for cid in t.get("closingTransactionIDs", [])
+                )
+
+            min_id = min(trade_ids) - 1  # include the MARKET_ORDER before first trade
+            max_id = max(closing_ids) if closing_ids else max(trade_ids) + 5
+
+            # Cap the range to avoid fetching thousands of transactions
+            if max_id - min_id > 500:
+                min_id = max_id - 500
+
+            txn_url = (
+                f"{self._base_url}/v3/accounts/{self._account_id}"
+                f"/transactions/idrange"
+            )
+            txn_resp = await self._request_with_retry(
+                "get", txn_url, params={"from": str(min_id), "to": str(max_id)},
+            )
+            txns = txn_resp.json().get("transactions", [])
+
+            # Index MARKET_ORDER transactions by ID → SL/TP
+            market_orders: dict[str, dict] = {}
+            for txn in txns:
+                if txn.get("type") == "MARKET_ORDER":
+                    sl_fill = txn.get("stopLossOnFill")
+                    tp_fill = txn.get("takeProfitOnFill")
+                    market_orders[txn["id"]] = {
+                        "sl": float(sl_fill["price"]) if sl_fill else None,
+                        "tp": float(tp_fill["price"]) if tp_fill else None,
+                    }
+
+            # Index ORDER_FILL transactions: trade_id → orderID (MARKET_ORDER)
+            order_fills: dict[str, str] = {}
+            for txn in txns:
+                if txn.get("type") == "ORDER_FILL":
+                    opened = txn.get("tradeOpened")
+                    if opened:
+                        order_fills[opened.get("tradeID", "")] = txn.get("orderID", "")
+
+            # Build SL/TP map: trade_id → SL/TP from the originating MARKET_ORDER
+            for trade_id, order_id in order_fills.items():
+                mo = market_orders.get(order_id)
+                if mo:
+                    sl_tp_map[trade_id] = mo
+
+            # Build close reason map from closing ORDER_FILL transactions
+            for txn in txns:
+                if txn.get("type") == "ORDER_FILL" and txn.get("tradesClosed"):
+                    reason = txn.get("reason", "")
+                    for tc in txn["tradesClosed"]:
+                        tid = tc.get("tradeID", "")
+                        if tid:
+                            close_reason_map[tid] = reason
+
+            # Also check TRADE_CLOSE transactions (some closures use this)
+            for txn in txns:
+                if txn.get("type") == "ORDER_FILL" and txn.get("tradeReduced"):
+                    reduced = txn["tradeReduced"]
+                    tid = reduced.get("tradeID", "")
+                    if tid and tid not in close_reason_map:
+                        close_reason_map[tid] = txn.get("reason", "")
+
+        except Exception:
+            logger.debug("Could not enrich closed trades with transaction data")
+
+        # ── Build ClosedTrade objects ────────────────────────────────
+        trades: list[ClosedTrade] = []
+        for t in raw_trades:
+            units = float(t.get("initialUnits", t.get("currentUnits", "0")))
+            direction = "long" if units > 0 else "short"
+            trade_id = t["id"]
+
+            # SL/TP from transaction enrichment
+            enriched = sl_tp_map.get(trade_id, {})
+            sl_price = enriched.get("sl")
+            tp_price = enriched.get("tp")
+
+            # Close reason from transaction enrichment
+            raw_reason = close_reason_map.get(trade_id, "")
+            if "TAKE_PROFIT" in raw_reason:
+                close_reason = "TAKE_PROFIT"
+            elif "STOP_LOSS" in raw_reason and "TRAILING" not in raw_reason:
+                close_reason = "STOP_LOSS"
+            elif "TRAILING" in raw_reason:
+                close_reason = "TRAILING_STOP"
+            elif "MARKET_ORDER" in raw_reason or "CLIENT" in raw_reason:
+                close_reason = "CLIENT_CLOSE"
+            elif "LINKED_TRADE" in raw_reason:
+                close_reason = "LINKED_CLOSE"
+            elif raw_reason:
+                close_reason = raw_reason
+            else:
+                close_reason = ""
+
+            trades.append(
+                ClosedTrade(
+                    trade_id=trade_id,
+                    instrument=t["instrument"],
+                    units=abs(units),
+                    entry_price=float(t["price"]),
+                    exit_price=float(t.get("averageClosePrice", t["price"])),
+                    realized_pnl=float(t.get("realizedPL", "0")),
+                    direction=direction,
+                    open_time=t.get("openTime", ""),
+                    close_time=t.get("closeTime", ""),
+                    stop_loss_price=sl_price,
+                    take_profit_price=tp_price,
+                    close_reason=close_reason,
+                )
+            )
+        return trades

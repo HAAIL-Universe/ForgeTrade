@@ -9,7 +9,7 @@ import os
 import pathlib
 
 from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import router
@@ -18,10 +18,20 @@ app = FastAPI(title="ForgeTrade Internal API", version="0.1.0")
 app.include_router(router)
 
 # ── Static files (dashboard) ────────────────────────────────────────────
+# Prefer the Vite production build (dashboard/dist → app/static/dist).
+# Falls back to the legacy single-page HTML if the build hasn't been run.
 
-_static_dir = os.path.join(os.path.dirname(__file__), "static")
-if os.path.isdir(_static_dir):
-    app.mount("/dashboard", StaticFiles(directory=_static_dir), name="dashboard")
+_dist_dir = os.path.join(os.path.dirname(__file__), "static", "dist")
+_legacy_dir = os.path.join(os.path.dirname(__file__), "static")
+
+if os.path.isdir(_dist_dir):
+    _assets_dir = os.path.join(_dist_dir, "assets")
+    if os.path.isdir(_assets_dir):
+        app.mount("/assets", StaticFiles(directory=_assets_dir), name="assets")
+
+# Keep legacy /dashboard mount for backward compatibility
+if os.path.isdir(_legacy_dir):
+    app.mount("/dashboard", StaticFiles(directory=_legacy_dir), name="dashboard")
 
 logger = logging.getLogger("forgetrade")
 
@@ -34,8 +44,23 @@ async def health():
 
 @app.get("/")
 async def root_redirect():
-    """Redirect root to the dashboard."""
-    return RedirectResponse(url="/dashboard/index.html", status_code=307)
+    """Serve the dashboard — Vite build if available, legacy fallback otherwise.
+
+    The HTML page is served with ``no-cache`` so the browser always fetches the
+    latest version after a Vite rebuild (hashed JS/CSS assets are immutable).
+    """
+    dist_index = os.path.join(_dist_dir, "index.html")
+    if os.path.isfile(dist_index):
+        with open(dist_index, "r", encoding="utf-8") as f:
+            html = f.read()
+        return HTMLResponse(
+            content=html,
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+    legacy_index = os.path.join(_legacy_dir, "index.html")
+    if os.path.isfile(legacy_index):
+        return RedirectResponse(url="/dashboard/index.html", status_code=307)
+    return {"error": "No dashboard build found. Run 'npm run build' in dashboard/."}
 
 
 def warn_if_live(mode: str) -> bool:
@@ -74,6 +99,11 @@ def _run_cli() -> None:
     )
     parser.add_argument("--start", help="Backtest start date (YYYY-MM-DD)")
     parser.add_argument("--end", help="Backtest end date (YYYY-MM-DD)")
+    parser.add_argument(
+        "--engine-only",
+        action="store_true",
+        help="Run trading engines without the API server (used with -Dev split)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -126,6 +156,8 @@ def _run_cli() -> None:
 
     if args.mode == "backtest":
         _run_backtest(config, broker, args.start, args.end)
+    elif args.engine_only:
+        asyncio.run(_run_engines_only(manager, args.mode))
     else:
         asyncio.run(_run_engine_manager(manager, args.mode))
 
@@ -159,6 +191,21 @@ async def _run_engine_manager(manager, mode: str, port: int = 8080) -> None:
         return_exceptions=True,
     )
     logger.info("ForgeTrade stopped. Results: %s", results)
+
+
+async def _run_engines_only(manager, mode: str) -> None:
+    """Run trading engines without starting the API server.
+
+    Used in ``-Dev`` mode where uvicorn is started separately with
+    ``--reload`` so Python file changes hot-reload the API.
+    """
+    logger.info(
+        "Starting ForgeTrade engines (no API) in %s mode with %d stream(s).",
+        mode,
+        len(manager.stream_names),
+    )
+    await manager.run_all()
+    logger.info("ForgeTrade engines stopped.")
 
 
 def _run_backtest(config, broker, start_date, end_date) -> None:

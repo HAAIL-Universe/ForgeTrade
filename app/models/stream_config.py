@@ -24,3 +24,5 @@ class StreamConfig:
     session_start_utc: int = 7
     session_end_utc: int = 21
     enabled: bool = True
+    rr_ratio: float | None = None  # Per-stream R:R override; None = strategy default
+    rl_filter: dict | None = None  # ForgeAgent RL filter config (mode, model_path, threshold)

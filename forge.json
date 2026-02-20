@@ -26,9 +26,10 @@
       "poll_interval_seconds": 300,
       "risk_per_trade_pct": 1.0,
       "max_concurrent_positions": 1,
-      "session_start_utc": 7,
-      "session_end_utc": 20,
-      "enabled": true
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 2.0
     },
     {
       "name": "micro-scalp",
@@ -36,15 +37,22 @@
       "strategy": "trend_scalp",
       "timeframes": [
         "H1",
-        "M1",
-        "S5"
+        "M5",
+        "M1"
       ],
-      "poll_interval_seconds": 30,
-      "risk_per_trade_pct": 0.5,
-      "max_concurrent_positions": 3,
-      "session_start_utc": 7,
-      "session_end_utc": 21,
-      "enabled": true
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 2.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 1.5,
+      "rl_filter": {
+        "mode": "shadow",
+        "model_path": "models/forge_agent/best_model.zip",
+        "confidence_threshold": 0.6,
+        "log_decisions": true
+      }
     },
     {
       "name": "mr-range",
@@ -54,14 +62,111 @@
         "H1",
         "M15"
       ],
-      "poll_interval_seconds": 120,
+      "poll_interval_seconds": 300,
       "risk_per_trade_pct": 0.75,
       "max_concurrent_positions": 1,
-      "session_start_utc": 7,
-      "session_end_utc": 20,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
       "enabled": false
+    },
+    {
+      "name": "sr-gbp",
+      "instrument": "GBP_USD",
+      "strategy": "sr_rejection",
+      "timeframes": [
+        "D",
+        "H4"
+      ],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 2.0
+    },
+    {
+      "name": "sr-jpy",
+      "instrument": "USD_JPY",
+      "strategy": "sr_rejection",
+      "timeframes": [
+        "D",
+        "H4"
+      ],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 2.0
+    },
+    {
+      "name": "sr-chf",
+      "instrument": "USD_CHF",
+      "strategy": "sr_rejection",
+      "timeframes": [
+        "D",
+        "H4"
+      ],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 2.0
+    },
+    {
+      "name": "sr-aud",
+      "instrument": "AUD_USD",
+      "strategy": "sr_rejection",
+      "timeframes": [
+        "D",
+        "H4"
+      ],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 2.0
+    },
+    {
+      "name": "sr-nzd",
+      "instrument": "NZD_USD",
+      "strategy": "sr_rejection",
+      "timeframes": [
+        "D",
+        "H4"
+      ],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 2.0
+    },
+    {
+      "name": "sr-cad",
+      "instrument": "USD_CAD",
+      "strategy": "sr_rejection",
+      "timeframes": [
+        "D",
+        "H4"
+      ],
+      "poll_interval_seconds": 300,
+      "risk_per_trade_pct": 1.0,
+      "max_concurrent_positions": 1,
+      "session_start_utc": 0,
+      "session_end_utc": 24,
+      "enabled": true,
+      "rr_ratio": 2.0
     }
   ],
   "max_drawdown_pct": 10.0,
-  "rr_ratio": 2.0
+  "rr_ratio": 2.0,
+  "leverage": 30
 }

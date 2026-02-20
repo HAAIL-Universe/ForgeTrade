@@ -258,6 +258,37 @@
   @media (max-width: 768px) {
     .metrics { grid-template-columns: repeat(2, 1fr); }
   }
+
+  /* ── Signal / Close Badges ──────────────────────────────── */
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 3px;
+    font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+  }
+  .badge-entered { background: #238636aa; color: #3fb950; border: 1px solid #238636; }
+  .badge-watching { background: #1f6feb33; color: #58a6ff; border: 1px solid #1f6feb; }
+  .badge-no-signal { background: #21262d; color: #484f58; border: 1px solid #30363d; }
+  .badge-error { background: #f8514922; color: #f85149; border: 1px solid #f85149; }
+  .badge-tp { background: #238636aa; color: #3fb950; border: 1px solid #238636; }
+  .badge-sl { background: #f8514922; color: #f85149; border: 1px solid #f85149; }
+  .badge-manual { background: #d2992233; color: #d29922; border: 1px solid #d29922; }
+  .badge-closed { background: #30363d; color: #8b949e; border: 1px solid #484f58; }
+
+  /* ── Drag-Reorder ───────────────────────────────────────── */
+  .drag-handle {
+    cursor: grab; color: #484f58; font-size: 14px; margin-right: 6px;
+    user-select: none; -webkit-user-select: none;
+    opacity: 0; transition: opacity 0.15s ease;
+    letter-spacing: 1px;
+  }
+  .card-title:hover .drag-handle,
+  .card.dragging .drag-handle { opacity: 1; }
+  .card.dragging {
+    opacity: 0.5; border-color: #58a6ff;
+    box-shadow: 0 4px 16px rgba(88, 166, 255, 0.15);
+  }
+  .card.drag-over-above { border-top: 2px solid #58a6ff; margin-top: -1px; }
+  .card.drag-over-below { border-bottom: 2px solid #58a6ff; margin-bottom: -1px; }
+  .drag-active .card { transition: transform 0.15s ease; }
 </style>
 </head>
 <body>
@@ -283,37 +314,66 @@
     <div class="metric-value mono" id="balance">—</div>
   </div>
   <div class="metric">
+    <div class="metric-label">Unrealised P&L</div>
+    <div class="metric-value mono" id="unrealized-pnl">—</div>
+  </div>
+  <div class="metric">
     <div class="metric-label">Drawdown</div>
     <div class="metric-value mono" id="drawdown">—</div>
     <div class="dd-bar-container"><div class="dd-bar" id="dd-bar"></div></div>
   </div>
+</div>
+<div class="metrics" style="grid-template-columns: repeat(2, 1fr); margin-top: -4px;">
   <div class="metric">
     <div class="metric-label">Circuit Breaker</div>
     <div class="metric-value" id="circuit-breaker">—</div>
   </div>
+  <div class="metric">
+    <div class="metric-label">Open Positions</div>
+    <div class="metric-value mono" id="open-pos-count">0</div>
+  </div>
 </div>
 
+<div id="card-container">
 <!-- ── Open Positions ─────────────────────────────────────── -->
-<div class="card" id="card-positions">
+<div class="card" id="card-positions" draggable="false">
   <div class="card-title" onclick="toggleCard('card-positions')">
-    <span>Open Positions</span>
+    <span><span class="drag-handle" title="Long-press to reorder">⠿</span>Open Positions</span>
     <span class="count mono" id="pos-count">0 open</span>
   </div>
   <div class="card-body">
   <table>
     <thead>
-      <tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>SL</th><th>TP</th><th>uP&L</th></tr>
+      <tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>SL</th><th>TP</th><th>Opened</th><th>uP&L</th></tr>
     </thead>
     <tbody id="positions-body">
-      <tr class="empty-row"><td colspan="7">No open positions</td></tr>
+      <tr class="empty-row"><td colspan="8">No open positions</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<!-- ── Trade History ──────────────────────────────────────── -->
+<div class="card" id="card-closed" draggable="false">
+  <div class="card-title" onclick="toggleCard('card-closed')">
+    <span><span class="drag-handle" title="Long-press to reorder">⠿</span>Trade History</span>
+    <span class="count mono" id="closed-total-pnl"></span>
+  </div>
+  <div class="card-body">
+  <table>
+    <thead>
+      <tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>Exit</th><th>SL</th><th>TP</th><th>P&L</th><th>Reason</th><th>Duration</th><th>Closed</th></tr>
+    </thead>
+    <tbody id="closed-body">
+      <tr class="empty-row"><td colspan="11">No closed trades</td></tr>
     </tbody>
   </table>
   </div>
 </div>
 
 <!-- ── Watchlist ───────────────────────────────────────────── -->
-<div class="card" id="card-watchlist">
-  <div class="card-title" onclick="toggleCard('card-watchlist')"><span>Watchlist</span></div>
+<div class="card" id="card-watchlist" draggable="false">
+  <div class="card-title" onclick="toggleCard('card-watchlist')"><span><span class="drag-handle" title="Long-press to reorder">⠿</span>Watchlist</span></div>
   <div class="card-body">
   <table>
     <thead>
@@ -327,9 +387,9 @@
 </div>
 
 <!-- ── Signal Log ─────────────────────────────────────────── -->
-<div class="card collapsed" id="card-signal-log">
+<div class="card collapsed" id="card-signal-log" draggable="false">
   <div class="card-title" onclick="toggleCard('card-signal-log')">
-    <span>Signal Log</span>
+    <span><span class="drag-handle" title="Long-press to reorder">⠿</span>Signal Log</span>
     <span class="count mono" id="signal-log-count">0</span>
   </div>
   <div class="card-body">
@@ -345,9 +405,9 @@
 </div>
 
 <!-- ── Strategy Insight ───────────────────────────────────── -->
-<div class="card" id="card-insight">
+<div class="card" id="card-insight" draggable="false">
   <div class="card-title" onclick="toggleCard('card-insight')">
-    <span>Strategy Insight</span>
+    <span><span class="drag-handle" title="Long-press to reorder">⠿</span>Strategy Insight</span>
     <span class="count mono" id="insight-strategy">—</span>
   </div>
   <div class="card-body">
@@ -377,27 +437,9 @@
   </div>
 </div>
 
-<!-- ── Closed Trades ──────────────────────────────────────── -->
-<div class="card collapsed" id="card-closed">
-  <div class="card-title" onclick="toggleCard('card-closed')">
-    <span>Closed Trades</span>
-    <span class="count mono" id="closed-total-pnl"></span>
-  </div>
-  <div class="card-body">
-  <table>
-    <thead>
-      <tr><th>Pair</th><th>Dir</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Status</th><th>Closed</th></tr>
-    </thead>
-    <tbody id="closed-body">
-      <tr class="empty-row"><td colspan="7">No closed trades</td></tr>
-    </tbody>
-  </table>
-  </div>
-</div>
-
 <!-- ── Streams ─────────────────────────────────────────────── -->
-<div class="card" id="card-streams">
-  <div class="card-title" onclick="toggleCard('card-streams')"><span>Streams</span></div>
+<div class="card" id="card-streams" draggable="false">
+  <div class="card-title" onclick="toggleCard('card-streams')"><span><span class="drag-handle" title="Long-press to reorder">⠿</span>Streams</span></div>
   <div class="card-body">
   <table>
     <thead>
@@ -411,8 +453,8 @@
 </div>
 
 <!-- ── Controls ────────────────────────────────────────────── -->
-<div class="card" id="card-controls">
-  <div class="card-title" onclick="toggleCard('card-controls')"><span>Controls</span></div>
+<div class="card" id="card-controls" draggable="false">
+  <div class="card-title" onclick="toggleCard('card-controls')"><span><span class="drag-handle" title="Long-press to reorder">⠿</span>Controls</span></div>
   <div class="card-body">
     <div class="controls-bar">
       <button class="btn-ctrl btn-pause" id="btn-pause" onclick="pauseAll()">⏸ Pause All</button>
@@ -423,8 +465,8 @@
 </div>
 
 <!-- ── Settings ────────────────────────────────────────────── -->
-<div class="card collapsed" id="card-settings">
-  <div class="card-title" onclick="toggleCard('card-settings')"><span>Settings</span></div>
+<div class="card collapsed" id="card-settings" draggable="false">
+  <div class="card-title" onclick="toggleCard('card-settings')"><span><span class="drag-handle" title="Long-press to reorder">⠿</span>Settings</span></div>
   <div class="card-body">
     <div class="settings-row">
       <span class="settings-label">Risk Per Trade</span>
@@ -474,6 +516,7 @@
     </div>
   </div>
 </div>
+</div><!-- /card-container -->
 
 <!-- ── Footer ─────────────────────────────────────────────── -->
 <div class="footer">
@@ -502,6 +545,144 @@ function toggleCard(id) {
       else if (el && !state[id]) el.classList.remove('collapsed');
     });
   } catch(e) {}
+})();
+
+// ── Drag-to-reorder cards (long-press) ─────────────────────
+(function() {
+  var container = document.getElementById('card-container');
+  if (!container) return;
+
+  var STORAGE_KEY = 'ft_card_order';
+  var LONG_PRESS_MS = 400;
+  var pressTimer = null;
+  var dragSrcEl = null;
+
+  /* ── Restore saved order on load ── */
+  try {
+    var saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
+    if (saved.length) {
+      saved.forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) container.appendChild(el);
+      });
+    }
+  } catch(e) {}
+
+  /* ── Save current order ── */
+  function saveOrder() {
+    var ids = [];
+    container.querySelectorAll('.card').forEach(function(c) { ids.push(c.id); });
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(ids)); } catch(e) {}
+  }
+
+  /* ── Clear drag indicators ── */
+  function clearIndicators() {
+    container.querySelectorAll('.card').forEach(function(c) {
+      c.classList.remove('drag-over-above', 'drag-over-below');
+    });
+  }
+
+  /* ── Activate drag mode ── */
+  function activateDrag(card) {
+    card.setAttribute('draggable', 'true');
+    container.classList.add('drag-active');
+    // Trigger dragstart programmatically isn't reliable; user must move mouse.
+    // Visual cue that they can now drag:
+    card.classList.add('dragging');
+  }
+
+  function deactivateDrag() {
+    container.querySelectorAll('.card').forEach(function(c) {
+      c.setAttribute('draggable', 'false');
+      c.classList.remove('dragging');
+    });
+    container.classList.remove('drag-active');
+    clearIndicators();
+  }
+
+  /* ── Long-press detection on drag handles ── */
+  container.addEventListener('mousedown', function(e) {
+    var handle = e.target.closest('.drag-handle');
+    if (!handle) return;
+    e.preventDefault();
+    var card = handle.closest('.card');
+    if (!card) return;
+    pressTimer = setTimeout(function() {
+      activateDrag(card);
+    }, LONG_PRESS_MS);
+  });
+  container.addEventListener('mouseup', function() { clearTimeout(pressTimer); });
+  container.addEventListener('mouseleave', function() { clearTimeout(pressTimer); });
+
+  /* ── Touch long-press ── */
+  container.addEventListener('touchstart', function(e) {
+    var handle = e.target.closest('.drag-handle');
+    if (!handle) return;
+    var card = handle.closest('.card');
+    if (!card) return;
+    pressTimer = setTimeout(function() {
+      activateDrag(card);
+    }, LONG_PRESS_MS);
+  }, { passive: true });
+  container.addEventListener('touchend', function() { clearTimeout(pressTimer); });
+
+  /* ── HTML5 Drag Events ── */
+  container.addEventListener('dragstart', function(e) {
+    var card = e.target.closest('.card');
+    if (!card) return;
+    dragSrcEl = card;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', card.id);
+    setTimeout(function() { card.classList.add('dragging'); }, 0);
+  });
+
+  container.addEventListener('dragover', function(e) {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    var card = e.target.closest('.card');
+    if (!card || card === dragSrcEl) { clearIndicators(); return; }
+    clearIndicators();
+    var rect = card.getBoundingClientRect();
+    var midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+      card.classList.add('drag-over-above');
+    } else {
+      card.classList.add('drag-over-below');
+    }
+  });
+
+  container.addEventListener('dragleave', function(e) {
+    var card = e.target.closest('.card');
+    if (card) {
+      card.classList.remove('drag-over-above', 'drag-over-below');
+    }
+  });
+
+  container.addEventListener('drop', function(e) {
+    e.preventDefault();
+    var target = e.target.closest('.card');
+    if (!target || !dragSrcEl || target === dragSrcEl) return;
+    var rect = target.getBoundingClientRect();
+    var midY = rect.top + rect.height / 2;
+    if (e.clientY < midY) {
+      container.insertBefore(dragSrcEl, target);
+    } else {
+      container.insertBefore(dragSrcEl, target.nextSibling);
+    }
+    saveOrder();
+  });
+
+  container.addEventListener('dragend', function() {
+    deactivateDrag();
+    dragSrcEl = null;
+  });
+
+  /* ── Click anywhere outside a handle cancels drag mode ── */
+  document.addEventListener('mousedown', function(e) {
+    if (!e.target.closest('.drag-handle') && container.classList.contains('drag-active')) {
+      deactivateDrag();
+    }
+  });
 })();
 
 // ── Global: control actions (accessed by onclick) ──────────
@@ -607,6 +788,48 @@ function saveSettings() {
     if (!iso) return '—';
     var d = new Date(iso);
     return d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: 'UTC'}) + ' UTC';
+  }
+
+  function fmtDateTime(iso) {
+    if (!iso) return '—';
+    var d = new Date(iso);
+    var date = d.toLocaleDateString('en-GB', {day: '2-digit', month: 'short', timeZone: 'UTC'});
+    var time = d.toLocaleTimeString('en-GB', {hour: '2-digit', minute: '2-digit', timeZone: 'UTC'});
+    return date + ' ' + time;
+  }
+
+  function fmtDuration(openIso, closeIso) {
+    if (!openIso || !closeIso) return '—';
+    var ms = new Date(closeIso) - new Date(openIso);
+    if (ms < 0) return '—';
+    var secs = Math.floor(ms / 1000);
+    if (secs < 60) return secs + 's';
+    var mins = Math.floor(secs / 60);
+    if (mins < 60) return mins + 'm';
+    var hrs = Math.floor(mins / 60);
+    var remMins = mins % 60;
+    if (hrs < 24) return hrs + 'h ' + remMins + 'm';
+    var days = Math.floor(hrs / 24);
+    return days + 'd ' + (hrs % 24) + 'h';
+  }
+
+  function signalBadge(status) {
+    if (!status) return '<span class="badge badge-no-signal">—</span>';
+    var s = status.toLowerCase();
+    if (s === 'entered') return '<span class="badge badge-entered">entered</span>';
+    if (s === 'watching') return '<span class="badge badge-watching">watching</span>';
+    if (s === 'error') return '<span class="badge badge-error">error</span>';
+    if (s === 'no_signal') return '<span class="badge badge-no-signal">no signal</span>';
+    return '<span class="badge badge-closed">' + status + '</span>';
+  }
+
+  function closeReasonBadge(reason) {
+    if (!reason) return '<span class="badge badge-closed">closed</span>';
+    var r = reason.toUpperCase();
+    if (r.indexOf('TAKE_PROFIT') >= 0) return '<span class="badge badge-tp">TP hit</span>';
+    if (r.indexOf('STOP_LOSS') >= 0) return '<span class="badge badge-sl">SL hit</span>';
+    if (r.indexOf('MARKET') >= 0 || r.indexOf('CLIENT') >= 0) return '<span class="badge badge-manual">manual</span>';
+    return '<span class="badge badge-closed">' + reason.toLowerCase() + '</span>';
   }
 
   function pnlClass(v) {
@@ -719,7 +942,7 @@ function saveSettings() {
     $('pos-count').textContent = positions.length + ' open';
 
     if (positions.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No open positions</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="8">No open positions</td></tr>';
       return;
     }
 
@@ -727,14 +950,18 @@ function saveSettings() {
     for (var i = 0; i < positions.length; i++) {
       var p = positions[i];
       var digits = p.instrument && p.instrument.indexOf('XAU') >= 0 ? 2 : 5;
+      var slText = p.stop_loss != null ? fmtPrice(p.stop_loss, digits) : '—';
+      var tpText = p.take_profit != null ? fmtPrice(p.take_profit, digits) : '—';
+      var openedText = p.open_time ? fmtDateTime(p.open_time) : '—';
       html +=
         '<tr>' +
         '<td>' + (p.instrument || '—').replace('_', '/') + '</td>' +
         '<td>' + (p.direction || '—').toUpperCase() + '</td>' +
         '<td class="mono">' + (p.units || 0) + '</td>' +
         '<td class="mono">' + fmtPrice(p.avg_price, digits) + '</td>' +
-        '<td class="mono">—</td>' +
-        '<td class="mono">—</td>' +
+        '<td class="mono">' + slText + '</td>' +
+        '<td class="mono">' + tpText + '</td>' +
+        '<td class="mono">' + openedText + '</td>' +
         '<td class="mono ' + pnlClass(p.unrealized_pnl) + '">' + fmt$(p.unrealized_pnl) + '</td>' +
         '</tr>';
     }
@@ -784,7 +1011,7 @@ function saveSettings() {
         '<td class="mono">' + t + '</td>' +
         '<td>' + (sig.pair || '—').replace('_', '/') + '</td>' +
         '<td class="' + dirCls + '">' + (sig.direction || '—').toUpperCase() + '</td>' +
-        '<td>' + (sig.status || '—') + '</td>' +
+        '<td>' + signalBadge(sig.status) + '</td>' +
         '<td>' + (sig.reason || '—') + '</td>' +
         '</tr>';
     }
@@ -801,7 +1028,7 @@ function saveSettings() {
     pnlEl.className = 'count mono ' + pnlClass(totalPnl);
 
     if (trades.length === 0) {
-      tbody.innerHTML = '<tr class="empty-row"><td colspan="7">No closed trades</td></tr>';
+      tbody.innerHTML = '<tr class="empty-row"><td colspan="11">No closed trades</td></tr>';
       return;
     }
 
@@ -813,11 +1040,15 @@ function saveSettings() {
         '<tr>' +
         '<td>' + (t.pair || '—').replace('_', '/') + '</td>' +
         '<td>' + (t.direction || '—').toUpperCase() + '</td>' +
+        '<td class="mono">' + (t.units != null ? Math.abs(t.units).toLocaleString() : '—') + '</td>' +
         '<td class="mono">' + fmtPrice(t.entry_price, digits) + '</td>' +
         '<td class="mono">' + fmtPrice(t.exit_price, digits) + '</td>' +
+        '<td class="mono">' + fmtPrice(t.stop_loss, digits) + '</td>' +
+        '<td class="mono">' + fmtPrice(t.take_profit, digits) + '</td>' +
         '<td class="mono ' + pnlClass(t.pnl) + '">' + fmt$(t.pnl) + '</td>' +
-        '<td>' + (t.status || '—') + '</td>' +
-        '<td class="mono">' + fmtTime(t.closed_at) + '</td>' +
+        '<td>' + closeReasonBadge(t.close_reason) + '</td>' +
+        '<td class="mono">' + fmtDuration(t.opened_at, t.closed_at) + '</td>' +
+        '<td class="mono">' + fmtDateTime(t.closed_at) + '</td>' +
         '</tr>';
     }
     tbody.innerHTML = html;
@@ -1147,6 +1378,37 @@ function saveSettings() {
 
   // ── Poll Loop ────────────────────────────────────────────
 
+  function updateAccount(data) {
+    var acct = data.account;
+    if (!acct) return;
+
+    // Overwrite equity & balance with live OANDA values
+    if (acct.equity != null) $('equity').textContent = fmt$(acct.equity);
+    if (acct.balance != null) $('balance').textContent = fmt$(acct.balance);
+
+    // Unrealised P&L metric
+    var upnl = acct.unrealized_pnl || 0;
+    var upnlEl = $('unrealized-pnl');
+    if (upnlEl) {
+      upnlEl.textContent = (upnl >= 0 ? '+' : '') + fmt$(upnl);
+      upnlEl.className = 'metric-value mono ' + pnlClass(upnl);
+    }
+
+    // Equity delta (equity minus balance)
+    if (acct.equity != null && acct.balance != null) {
+      var delta = acct.equity - acct.balance;
+      var el = $('equity-delta');
+      el.textContent = (delta >= 0 ? '+' : '') + fmt$(delta);
+      el.className = 'metric-sub mono ' + pnlClass(delta);
+    }
+
+    // Open positions count
+    var posEl = $('open-pos-count');
+    if (posEl && acct.open_position_count != null) {
+      posEl.textContent = acct.open_position_count;
+    }
+  }
+
   function poll() {
     Promise.all([
       fetchJSON('/status'),
@@ -1154,7 +1416,8 @@ function saveSettings() {
       fetchJSON('/signals/pending'),
       fetchJSON('/trades/closed?limit=20'),
       fetchJSON('/strategy/insight'),
-      fetchJSON('/signals/history')
+      fetchJSON('/signals/history'),
+      fetchJSON('/account')
     ]).then(function(results) {
       updateStatus(results[0]);
       updatePositions(results[1]);
@@ -1162,6 +1425,7 @@ function saveSettings() {
       updateClosedTrades(results[3]);
       updateInsight(results[4]);
       updateSignalLog(results[5]);
+      updateAccount(results[6]);
       $('last-refresh').textContent = new Date().toLocaleTimeString('en-GB', {hour:'2-digit', minute:'2-digit', second:'2-digit', timeZone:'UTC'}) + ' UTC';
     }).catch(function(err) {
       console.error('Poll error:', err);

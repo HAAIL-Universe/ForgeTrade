@@ -1,7 +1,7 @@
-"""Scalp entry signal evaluation — pullback + confirmation on M1/S5.
+"""Scalp entry signal evaluation — pullback + confirmation on M5/M1.
 
 Only produces an entry when the momentum bias direction matches
-the M1 candlestick pattern.  With-bias entries only — no counter-trend.
+the M5 candlestick pattern.  With-bias entries only — no counter-trend.
 """
 
 from dataclasses import dataclass
@@ -146,8 +146,8 @@ def _has_sell_confirmation(candles: list[CandleData]) -> tuple[bool, str]:
 
 
 def evaluate_scalp_entry(
+    candles_m5: list[CandleData],
     candles_m1: list[CandleData],
-    candles_s5: list[CandleData],
     trend: TrendState,
     pullback_ema_period: int = 9,
 ) -> Optional[ScalpEntrySignal]:
@@ -157,10 +157,10 @@ def evaluate_scalp_entry(
     pullback setups.  If bearish, looks for sell setups.  No counter-trend.
 
     Args:
-        candles_m1: M1 candle history, oldest-first.  Need >= pullback_ema_period + 2.
-        candles_s5: S5 candle history, oldest-first.
+        candles_m5: M5 candle history, oldest-first.  Need >= pullback_ema_period + 2.
+        candles_m1: M1 candle history, oldest-first.
         trend: The momentum bias ``TrendState``.
-        pullback_ema_period: EMA period for pullback detection on M1.
+        pullback_ema_period: EMA period for pullback detection on M5.
 
     Returns:
         ``ScalpEntrySignal`` if conditions are met, else ``None``.
@@ -168,24 +168,24 @@ def evaluate_scalp_entry(
     if trend.direction == "flat":
         return None
 
-    if len(candles_m1) < pullback_ema_period + 2:
+    if len(candles_m5) < pullback_ema_period + 2:
         return None
 
-    # Calculate M1 EMA for proximity checks
-    ema_values = calculate_ema(candles_m1, pullback_ema_period)
+    # Calculate M5 EMA for proximity checks
+    ema_values = calculate_ema(candles_m5, pullback_ema_period)
     if not ema_values:
         return None
 
     ema_current = ema_values[-1]
-    last_close = candles_m1[-1].close
+    last_close = candles_m5[-1].close
 
-    # ── Helper: check confirmation on M1, fallback to S5
+    # ── Helper: check confirmation on M5, fallback to M1
     def _check_confirm(check_fn):
-        confirmed, pattern = check_fn(candles_m1)
-        if not confirmed and len(candles_s5) >= 2:
-            confirmed, pattern = check_fn(candles_s5)
+        confirmed, pattern = check_fn(candles_m5)
+        if not confirmed and len(candles_m1) >= 2:
+            confirmed, pattern = check_fn(candles_m1)
             if confirmed:
-                pattern += " (S5)"
+                pattern += " (M1)"
         return confirmed, pattern
 
     # ── WITH-BIAS entry ──
@@ -198,7 +198,7 @@ def evaluate_scalp_entry(
                 return ScalpEntrySignal(
                     direction="buy",
                     entry_price=last_close,
-                    reason=f"Bias-scalp buy: {pattern} at M1 EMA({pullback_ema_period}) pullback",
+                    reason=f"Bias-scalp buy: {pattern} at M5 EMA({pullback_ema_period}) pullback",
                 )
 
     elif trend.direction == "bearish":
@@ -209,7 +209,7 @@ def evaluate_scalp_entry(
                 return ScalpEntrySignal(
                     direction="sell",
                     entry_price=last_close,
-                    reason=f"Bias-scalp sell: {pattern} at M1 EMA({pullback_ema_period}) pullback",
+                    reason=f"Bias-scalp sell: {pattern} at M5 EMA({pullback_ema_period}) pullback",
                 )
 
     return None

@@ -22,12 +22,15 @@ def _make_trade_repo(trades=None, total=0):
     return repo
 
 
-def _make_broker(positions=None):
-    """Return a mock broker with canned list_open_positions response."""
+def _make_broker(positions=None, trades=None):
+    """Return a mock broker with canned list_open_positions/trades response."""
     broker = AsyncMock()
     if positions is None:
         positions = []
+    if trades is None:
+        trades = []
     broker.list_open_positions.return_value = positions
+    broker.list_open_trades.return_value = trades
     return broker
 
 
@@ -45,18 +48,21 @@ class TestPositionsEndpoint:
         assert isinstance(data["positions"], list)
 
     def test_positions_returns_list_schema(self):
-        from app.broker.models import Position
+        from app.broker.models import Trade
 
-        positions = [
-            Position(
+        trades = [
+            Trade(
+                trade_id="123",
                 instrument="EUR_USD",
-                long_units=1000.0,
-                short_units=0.0,
+                units=1000.0,
+                price=1.08500,
                 unrealized_pnl=25.50,
-                average_price=1.08500,
+                stop_loss_price=1.07500,
+                take_profit_price=1.09500,
+                open_time="2026-02-17T14:51:19Z",
             )
         ]
-        broker = _make_broker(positions=positions)
+        broker = _make_broker(trades=trades)
         configure_routers(trade_repo=_make_trade_repo(), broker=broker)
         resp = client.get("/positions")
         assert resp.status_code == 200
@@ -68,6 +74,8 @@ class TestPositionsEndpoint:
         assert pos["units"] == 1000.0
         assert pos["avg_price"] == 1.08500
         assert pos["unrealized_pnl"] == 25.50
+        assert pos["stop_loss"] == 1.07500
+        assert pos["take_profit"] == 1.09500
 
     def test_positions_no_broker(self):
         configure_routers(trade_repo=_make_trade_repo(), broker=None)
@@ -165,7 +173,9 @@ class TestDashboardServed:
         assert resp.status_code == 200
         assert "text/html" in resp.headers.get("content-type", "")
 
-    def test_root_redirects_to_dashboard(self):
+    def test_root_serves_dashboard(self):
+        """Root serves the Vite build (200) or redirects to legacy (307)."""
         resp = client.get("/", follow_redirects=False)
-        assert resp.status_code == 307
-        assert "/dashboard/index.html" in resp.headers.get("location", "")
+        assert resp.status_code in (200, 307)
+        if resp.status_code == 307:
+            assert "/dashboard/index.html" in resp.headers.get("location", "")

@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.api.routers import update_bot_status, update_pending_signal, update_strategy_insight
+from app.api.routers import update_bot_status, update_pending_signal, update_strategy_insight, push_rl_decision
 from app.broker.models import OrderRequest
 from app.broker.oanda_client import OandaClient
 from app.config import Config
@@ -20,6 +20,14 @@ from app.strategy.base import StrategyProtocol
 from app.strategy.models import INSTRUMENT_PIP_VALUES
 from app.strategy.session_filter import is_in_session
 
+# ForgeAgent RL filter (optional — only loaded when configured)
+try:
+    from app.rl.filter import RLTradeFilter, ShadowLogger
+    from app.rl.features import ForgeStateBuilder, AccountSnapshot
+    _RL_AVAILABLE = True
+except ImportError:
+    _RL_AVAILABLE = False
+
 logger = logging.getLogger("forgetrade")
 
 
@@ -27,12 +35,14 @@ class _EngineConfig:
     """Lightweight wrapper that overrides ``trade_pair`` per-stream.
 
     Delegates every attribute to the underlying global ``Config``,
-    except ``trade_pair`` which is set to the stream's instrument.
+    except ``trade_pair`` which is set to the stream's instrument,
+    and ``rr_ratio`` which is set from the stream config.
     """
 
-    def __init__(self, config: Config, instrument: str) -> None:
+    def __init__(self, config: Config, instrument: str, rr_ratio: float | None = None) -> None:
         object.__setattr__(self, "_inner", config)
         object.__setattr__(self, "trade_pair", instrument)
+        object.__setattr__(self, "rr_ratio", rr_ratio)
 
     def __getattr__(self, name: str):
         return getattr(object.__getattribute__(self, "_inner"), name)
@@ -62,6 +72,47 @@ class TradingEngine:
         self._drawdown: Optional[DrawdownTracker] = None
         self._running: bool = False
         self._cycle_count: int = 0
+
+        # ForgeAgent RL filter
+        self._rl_filter: Optional[object] = None
+        self._rl_shadow: Optional[object] = None
+        self._rl_state_builder: Optional[object] = None
+        self._rl_mode: str = "disabled"
+        self._init_rl_filter()
+
+    def _init_rl_filter(self) -> None:
+        """Initialise ForgeAgent RL filter if configured for this stream."""
+        if not _RL_AVAILABLE:
+            return
+        if not self._stream_config or not self._stream_config.rl_filter:
+            return
+
+        rl_cfg = self._stream_config.rl_filter
+        mode = rl_cfg.get("mode", "disabled")
+        if mode == "disabled":
+            return
+
+        model_path = rl_cfg.get("model_path", "")
+        threshold = rl_cfg.get("confidence_threshold", 0.6)
+
+        try:
+            self._rl_filter = RLTradeFilter(model_path, threshold)
+            self._rl_state_builder = ForgeStateBuilder()
+            self._rl_mode = mode
+
+            if mode == "shadow" and rl_cfg.get("log_decisions", True):
+                self._rl_shadow = ShadowLogger()
+
+            logger.info(
+                "Stream '%s' — ForgeAgent loaded in %s mode (threshold=%.2f)",
+                self.stream_name, mode, threshold,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Stream '%s' — ForgeAgent failed to load: %s (continuing without RL filter)",
+                self.stream_name, exc,
+            )
+            self._rl_mode = "disabled"
 
     @property
     def stream_name(self) -> str:
@@ -95,6 +146,13 @@ class TradingEngine:
             return self._stream_config.risk_per_trade_pct
         return self._config.risk_per_trade_pct
 
+    @property
+    def _rr_ratio(self) -> float | None:
+        """Per-stream R:R override, or None for strategy default."""
+        if self._stream_config:
+            return self._stream_config.rr_ratio
+        return None
+
     # ── Lifecycle ────────────────────────────────────────────────────────
 
     async def initialize(self) -> None:
@@ -110,6 +168,11 @@ class TradingEngine:
                 equity=summary.equity,
                 balance=summary.balance,
                 running=True,
+                started_at=datetime.now(timezone.utc).isoformat(),
+                strategy=(
+                    self._stream_config.strategy
+                    if self._stream_config else None
+                ),
             )
         except Exception as exc:
             logger.error(
@@ -208,7 +271,14 @@ class TradingEngine:
                 break
 
             # Interruptible sleep — checks _running every second
-            for _ in range(poll_interval):
+            # Re-read poll interval each cycle so dashboard changes take
+            # effect without restarting the engine.
+            current_interval = (
+                self._stream_config.poll_interval_seconds
+                if self._stream_config
+                else poll_interval
+            )
+            for _ in range(current_interval):
                 if not self._running:
                     break
                 await asyncio.sleep(1)
@@ -235,9 +305,13 @@ class TradingEngine:
         if utc_now is None:
             utc_now = datetime.now(timezone.utc)
 
+        # 0 ── Always push ForgeAgent mode so the UI always shows agent status
+        _rl_base = {"rl_mode": self._rl_mode}
+
         # 1 ── Circuit breaker
         if self._drawdown and self._drawdown.circuit_breaker_active:
             update_strategy_insight(self.stream_name, {
+                **_rl_base,
                 "strategy": "—",
                 "pair": self.instrument,
                 "checks": {
@@ -251,6 +325,14 @@ class TradingEngine:
                 "result": "circuit_breaker",
                 "evaluated_at": utc_now.isoformat(),
             })
+            update_pending_signal({
+                "pair": self.instrument,
+                "direction": None,
+                "reason": "Circuit breaker active",
+                "status": "halted",
+                "evaluated_at": utc_now.isoformat(),
+                "stream_name": self.stream_name,
+            })
             return {"action": "halted", "reason": "circuit_breaker"}
 
         # 2 ── Session filter
@@ -260,6 +342,7 @@ class TradingEngine:
             self._session_end,
         ):
             update_strategy_insight(self.stream_name, {
+                **_rl_base,
                 "strategy": "—",
                 "pair": self.instrument,
                 "checks": {
@@ -273,14 +356,56 @@ class TradingEngine:
                 "result": "outside_session",
                 "evaluated_at": utc_now.isoformat(),
             })
+            update_pending_signal({
+                "pair": self.instrument,
+                "direction": None,
+                "reason": "Outside session window",
+                "status": "skipped",
+                "evaluated_at": utc_now.isoformat(),
+                "stream_name": self.stream_name,
+            })
             return {"action": "skipped", "reason": "outside_session"}
+
+        # 2b ── Session-end buffer for scalp strategies
+        #       Scalps need time to play out — skip if too close to session end.
+        #       Skip this check for 24h sessions (0-24) — market is continuous during the week.
+        buffer_min = getattr(self._strategy, "SESSION_END_BUFFER_MIN", 0) if self._strategy else 0
+        is_24h_session = (self._session_start == 0 and self._session_end == 24)
+        if buffer_min and isinstance(buffer_min, (int, float)) and buffer_min > 0 and not is_24h_session:
+            session_end_hour = self._session_end
+            # Minutes until session closes
+            mins_until_close = (session_end_hour - utc_now.hour - 1) * 60 + (60 - utc_now.minute)
+            if mins_until_close <= buffer_min:
+                update_strategy_insight(self.stream_name, {
+                    **_rl_base,
+                    "strategy": "Momentum Scalp",
+                    "pair": self.instrument,
+                    "checks": {
+                        "circuit_breaker_clear": True,
+                        "in_session": True,
+                        "session_end_buffer": False,
+                    },
+                    "result": "session_ending_soon",
+                    "mins_until_close": mins_until_close,
+                    "buffer_min": buffer_min,
+                    "evaluated_at": utc_now.isoformat(),
+                })
+                update_pending_signal({
+                    "pair": self.instrument,
+                    "direction": None,
+                    "reason": f"Session ending in {mins_until_close} min",
+                    "status": "skipped",
+                    "evaluated_at": utc_now.isoformat(),
+                    "stream_name": self.stream_name,
+                })
+                return {"action": "skipped", "reason": "session_ending_soon"}
 
         # 3 ── Strategy evaluation (delegates to pluggable strategy)
         if self._strategy is None:
             return {"action": "skipped", "reason": "no_strategy"}
 
-        # Wrap config so strategy sees this stream's instrument as trade_pair
-        engine_config = _EngineConfig(self._config, self.instrument)
+        # Wrap config so strategy sees this stream's instrument + rr_ratio
+        engine_config = _EngineConfig(self._config, self.instrument, rr_ratio=self._rr_ratio)
         result = await self._strategy.evaluate(self._broker, engine_config)
 
         # Push strategy insight data to the dashboard (if strategy supports it)
@@ -294,16 +419,34 @@ class TradingEngine:
             insight.setdefault("checks", {})
             insight["checks"]["in_session"] = True  # We got past check 2
             insight["checks"]["circuit_breaker_clear"] = True  # Got past check 1
+            # Merge ForgeAgent mode so UI always reflects current state
+            insight.update(_rl_base)
             update_strategy_insight(self.stream_name, insight)
 
         if result is None:
+            # Forward the strategy's specific skip reason if available
+            skip_reason = "No signal from strategy"
+            if (
+                hasattr(self._strategy, "last_insight")
+                and isinstance(self._strategy.last_insight, dict)
+                and self._strategy.last_insight.get("result")
+            ):
+                reason_slug = self._strategy.last_insight["result"]
+                _REASON_LABELS = {
+                    "no_bias": "No directional bias",
+                    "low_volatility": "Low volatility (ATR too low)",
+                    "spread_too_wide": "Spread too wide",
+                    "no_pullback": "No pullback to EMA",
+                    "no_confirmation": "No confirmation pattern",
+                }
+                skip_reason = _REASON_LABELS.get(reason_slug, reason_slug.replace("_", " ").capitalize())
             update_pending_signal({
                 "pair": self.instrument,
                 "direction": None,
                 "zone_price": None,
                 "zone_type": None,
-                "reason": "No signal from strategy",
-                "status": "no_signal",
+                "reason": skip_reason,
+                "status": "skipped",
                 "evaluated_at": utc_now.isoformat(),
                 "stream_name": self.stream_name,
             })
@@ -312,6 +455,91 @@ class TradingEngine:
         signal = result.signal
         sl = result.sl
         tp = result.tp
+
+        # ── ForgeAgent RL filter ─────────────────────────────────────
+        if self._rl_filter is not None and self._rl_mode in ("shadow", "active"):
+            try:
+                # Build state vector from candle data cached by strategy
+                m5_raw = await self._broker.fetch_candles(self.instrument, "M5", count=100)
+                m1_raw = await self._broker.fetch_candles(self.instrument, "M1", count=20)
+                h1_raw = await self._broker.fetch_candles(self.instrument, "H1", count=50)
+                m15_raw = await self._broker.fetch_candles(self.instrument, "M15", count=30)
+
+                from app.strategy.models import CandleData as _CD
+                _to_cd = lambda cs: [_CD(c.time, c.open, c.high, c.low, c.close, c.volume) for c in cs]
+
+                dd_pct = self._drawdown.drawdown_pct if self._drawdown else 0.0
+                account_snap = AccountSnapshot(
+                    drawdown_pct=dd_pct,
+                    max_drawdown_pct=self._config.max_drawdown_pct,
+                )
+
+                state = self._rl_state_builder.build(
+                    m5_candles=_to_cd(m5_raw),
+                    m1_candles=_to_cd(m1_raw),
+                    h1_candles=_to_cd(h1_raw),
+                    m15_candles=_to_cd(m15_raw),
+                    account=account_snap,
+                    pip_value=INSTRUMENT_PIP_VALUES.get(self.instrument, 0.01),
+                )
+                state_arr = state.to_array()
+
+                rl_action, rl_conf = self._rl_filter.assess(state_arr)
+
+                # Shadow logging
+                if self._rl_shadow:
+                    self._rl_shadow.log(
+                        timestamp=utc_now.isoformat(),
+                        instrument=self.instrument,
+                        direction=signal.direction,
+                        entry_price=signal.entry_price,
+                        action=rl_action,
+                        confidence=rl_conf,
+                    )
+
+                # Push decision to dashboard ring buffer (both shadow + active)
+                push_rl_decision({
+                    "timestamp": utc_now.isoformat(),
+                    "instrument": self.instrument,
+                    "direction": signal.direction,
+                    "entry_price": round(signal.entry_price, 2),
+                    "action": "TAKE" if rl_action == 1 else "VETO",
+                    "confidence": round(rl_conf, 4),
+                    "mode": self._rl_mode,
+                })
+
+                # Update insight with latest decision for both modes
+                update_strategy_insight(self.stream_name, {
+                    "rl_filter": "approved" if rl_action == 1 else "vetoed",
+                    "rl_confidence": round(rl_conf, 3),
+                    "rl_assessed_at": utc_now.isoformat(),
+                })
+
+                # Active mode: veto low-confidence signals
+                if self._rl_mode == "active" and rl_action == 0:
+                    logger.info(
+                        "ForgeAgent VETOED %s %s signal (confidence=%.2f)",
+                        signal.direction, self.instrument, rl_conf,
+                    )
+                    update_pending_signal({
+                        "pair": self.instrument,
+                        "direction": signal.direction,
+                        "reason": f"ForgeAgent vetoed (conf={rl_conf:.2f})",
+                        "status": "skipped",
+                        "evaluated_at": utc_now.isoformat(),
+                        "stream_name": self.stream_name,
+                    })
+                    return {"action": "skipped", "reason": "rl_veto", "confidence": rl_conf}
+
+                # Log approval
+                if self._rl_mode == "active":
+                    logger.info(
+                        "ForgeAgent APPROVED %s %s signal (confidence=%.2f)",
+                        signal.direction, self.instrument, rl_conf,
+                    )
+
+            except Exception as exc:
+                logger.warning("ForgeAgent error (proceeding without filter): %s", exc)
 
         # Update watchlist with the signal
         update_pending_signal({
@@ -324,6 +552,10 @@ class TradingEngine:
             "evaluated_at": utc_now.isoformat(),
             "stream_name": self.stream_name,
         })
+        update_bot_status(
+            stream_name=self.stream_name,
+            last_signal_time=utc_now.isoformat(),
+        )
 
         # 4 ── Account state + position sizing
         summary = await self._broker.get_account_summary()
@@ -356,6 +588,14 @@ class TradingEngine:
                     if p.instrument == self.instrument
                 )
                 if instrument_positions >= self._stream_config.max_concurrent_positions:
+                    update_pending_signal({
+                        "pair": self.instrument,
+                        "direction": signal.direction,
+                        "reason": f"Max positions ({self._stream_config.max_concurrent_positions}) reached",
+                        "status": "skipped",
+                        "evaluated_at": utc_now.isoformat(),
+                        "stream_name": self.stream_name,
+                    })
                     return {
                         "action": "skipped",
                         "reason": "max_concurrent_positions",

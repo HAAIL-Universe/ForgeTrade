@@ -58,3 +58,35 @@ class Position:
     short_units: float
     unrealized_pnl: float
     average_price: float
+
+
+@dataclass(frozen=True)
+class Trade:
+    """An open trade with SL/TP details."""
+
+    trade_id: str
+    instrument: str
+    units: float
+    price: float
+    unrealized_pnl: float
+    stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    open_time: str = ""
+
+
+@dataclass(frozen=True)
+class ClosedTrade:
+    """A closed trade with full lifecycle details."""
+
+    trade_id: str
+    instrument: str
+    units: float
+    entry_price: float
+    exit_price: float
+    realized_pnl: float
+    direction: str  # "long" or "short"
+    open_time: str = ""
+    close_time: str = ""
+    stop_loss_price: Optional[float] = None
+    take_profit_price: Optional[float] = None
+    close_reason: str = ""

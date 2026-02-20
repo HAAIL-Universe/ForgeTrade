@@ -1,0 +1,484 @@
+[
+  {
+    "timestamp": "2026-02-20T05:42:13.803194+00:00",
+    "label": "baseline-500k",
+    "model_path": "models/forge_agent/best_model.zip",
+    "instrument": "XAU_USD",
+    "parameters": 20771,
+    "training_timesteps": 500000,
+    "eval_episodes": 10,
+    "metrics": {
+      "win_rate": 0.0,
+      "take_rate": 0.9583,
+      "profit_factor": 0.0,
+      "max_drawdown": 7.7632,
+      "avg_r_multiple": -0.058,
+      "sharpe_ratio": -4930000.0,
+      "mean_episode_reward": -4.93,
+      "total_trades_taken": 690,
+      "total_signals_seen": 690
+    }
+  },
+  {
+    "timestamp": "2026-02-20T06:51:34.166938+00:00",
+    "label": "iter-1-correct_veto_reward",
+    "model_path": "models/forge_agent/best_model.zip",
+    "instrument": "XAU_USD",
+    "parameters": 20771,
+    "training_timesteps": 100000,
+    "eval_episodes": 10,
+    "metrics": {
+      "win_rate": 0.0,
+      "take_rate": 0.9444,
+      "profit_factor": 0.0,
+      "max_drawdown": 5.8808,
+      "avg_r_multiple": -0.0441,
+      "sharpe_ratio": -3370000.0,
+      "mean_episode_reward": -3.37,
+      "total_trades_taken": 680,
+      "total_signals_seen": 680
+    },
+    "failures": {
+      "total_signals": 720,
+      "total_taken": 680,
+      "total_vetoed": 40,
+      "total_wins": 0,
+      "total_losses": 680,
+      "exit_reasons": {
+        "sl_hit": 30,
+        "time_exit": 650
+      },
+      "worst_hours": [],
+      "volatility": {
+        "low": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "mid": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "high": {
+          "losses": 680,
+          "total": 680,
+          "loss_rate": 1.0
+        }
+      },
+      "trend_alignment": {
+        "aligned": {
+          "losses": 390,
+          "total": 390,
+          "loss_rate": 1.0
+        },
+        "counter": {
+          "losses": 290,
+          "total": 290,
+          "loss_rate": 1.0
+        }
+      },
+      "hold_duration": {
+        "very_fast_0_5min": 680,
+        "short_5_15min": 0,
+        "mid_15_30min": 0,
+        "long_30plus_min": 0
+      },
+      "direction": {
+        "buy": {
+          "losses": 350,
+          "total": 350,
+          "loss_rate": 1.0
+        },
+        "sell": {
+          "losses": 330,
+          "total": 330,
+          "loss_rate": 1.0
+        }
+      },
+      "high_spread": {
+        "losses": 30,
+        "total": 30,
+        "loss_rate": 1.0
+      },
+      "failure_clusters": [
+        {
+          "pattern": "fast_sl_hit",
+          "description": "SL hit <5min: 680/680 losses (100%)",
+          "impact": 680,
+          "suggestion": "widen sl_buffer_pips"
+        },
+        {
+          "pattern": "time_exits",
+          "description": "Time exits: 650/680 losses (96%)",
+          "impact": 650,
+          "suggestion": "reduce max_hold_minutes or tighten entry"
+        },
+        {
+          "pattern": "counter_trend",
+          "description": "Counter-H1-trend: 290/290 losses (100%)",
+          "impact": 290,
+          "suggestion": "require_h1_alignment"
+        },
+        {
+          "pattern": "high_spread",
+          "description": "Spread >4 pips: 30/30 losses (100%)",
+          "impact": 30,
+          "suggestion": "lower max_spread_pips"
+        }
+      ]
+    },
+    "iteration": 1,
+    "nudge": {
+      "iteration": 1,
+      "param": "correct_veto_reward",
+      "direction": 1,
+      "old_value": 0.3,
+      "new_value": 0.35,
+      "reason": "No strong cluster \u2014 nudge agent toward more selective vetoing",
+      "reverted": false
+    },
+    "env_config": {
+      "instrument": "XAU_USD",
+      "pip_value": 0.01,
+      "episode_length_days": 5,
+      "max_steps_per_episode": 200,
+      "max_hold_minutes": 120,
+      "risk_per_trade_pct": 2.0,
+      "initial_equity": 10000.0,
+      "max_drawdown_pct": 10.0,
+      "rr_ratio": 1.5,
+      "bias_lookback": 15,
+      "ema_pullback_period": 9,
+      "atr_period": 14,
+      "rsi_period": 14,
+      "bb_period": 20,
+      "bb_std": 2.0
+    },
+    "reward_config": {
+      "correct_veto_reward": 0.35,
+      "missed_winner_penalty": -0.15,
+      "ideal_hold_max": 30,
+      "moderate_hold_max": 60,
+      "long_hold_max": 120,
+      "moderate_hold_penalty": -0.05,
+      "long_hold_penalty": -0.15,
+      "time_exit_penalty": -0.3,
+      "dd_warning_threshold": 3.0,
+      "dd_danger_threshold": 5.0,
+      "dd_warning_multiplier": 2.0,
+      "dd_danger_multiplier": 3.0,
+      "losing_streak_extra_penalty": -0.15,
+      "winning_streak_bonus": 0.1,
+      "streak_lookback": 3,
+      "reward_min": -2.0,
+      "reward_max": 2.0
+    }
+  },
+  {
+    "timestamp": "2026-02-20T06:58:00.757880+00:00",
+    "label": "iter-2-rr_ratio",
+    "model_path": "models/forge_agent/best_model.zip",
+    "instrument": "XAU_USD",
+    "parameters": 20771,
+    "training_timesteps": 100000,
+    "eval_episodes": 10,
+    "metrics": {
+      "win_rate": 0.0417,
+      "take_rate": 1.0,
+      "profit_factor": 1.0504,
+      "max_drawdown": 0.0,
+      "avg_r_multiple": 0.0028,
+      "sharpe_ratio": -178207.4351,
+      "mean_episode_reward": -0.1782,
+      "total_trades_taken": 720,
+      "total_signals_seen": 720
+    },
+    "failures": {
+      "total_signals": 720,
+      "total_taken": 720,
+      "total_vetoed": 0,
+      "total_wins": 30,
+      "total_losses": 690,
+      "exit_reasons": {
+        "sl_hit": 40,
+        "time_exit": 650
+      },
+      "worst_hours": [],
+      "volatility": {
+        "low": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "mid": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "high": {
+          "losses": 690,
+          "total": 720,
+          "loss_rate": 0.958
+        }
+      },
+      "trend_alignment": {
+        "aligned": {
+          "losses": 400,
+          "total": 400,
+          "loss_rate": 1.0
+        },
+        "counter": {
+          "losses": 290,
+          "total": 320,
+          "loss_rate": 0.906
+        }
+      },
+      "hold_duration": {
+        "very_fast_0_5min": 690,
+        "short_5_15min": 0,
+        "mid_15_30min": 0,
+        "long_30plus_min": 0
+      },
+      "direction": {
+        "buy": {
+          "losses": 350,
+          "total": 380,
+          "loss_rate": 0.921
+        },
+        "sell": {
+          "losses": 340,
+          "total": 340,
+          "loss_rate": 1.0
+        }
+      },
+      "high_spread": {
+        "losses": 40,
+        "total": 70,
+        "loss_rate": 0.571
+      },
+      "failure_clusters": [
+        {
+          "pattern": "fast_sl_hit",
+          "description": "SL hit <5min: 690/690 losses (100%)",
+          "impact": 690,
+          "suggestion": "widen sl_buffer_pips"
+        },
+        {
+          "pattern": "time_exits",
+          "description": "Time exits: 650/690 losses (94%)",
+          "impact": 650,
+          "suggestion": "reduce max_hold_minutes or tighten entry"
+        },
+        {
+          "pattern": "counter_trend",
+          "description": "Counter-H1-trend: 290/320 losses (91%)",
+          "impact": 290,
+          "suggestion": "require_h1_alignment"
+        }
+      ]
+    },
+    "iteration": 2,
+    "nudge": {
+      "iteration": 2,
+      "param": "rr_ratio",
+      "direction": -1,
+      "old_value": 1.5,
+      "new_value": 1.4,
+      "reason": "Fast SL hits \u2192 tighter R:R to reduce required move size",
+      "reverted": false
+    },
+    "env_config": {
+      "instrument": "XAU_USD",
+      "pip_value": 0.01,
+      "episode_length_days": 5,
+      "max_steps_per_episode": 200,
+      "max_hold_minutes": 120,
+      "risk_per_trade_pct": 2.0,
+      "initial_equity": 10000.0,
+      "max_drawdown_pct": 10.0,
+      "rr_ratio": 1.4,
+      "bias_lookback": 15,
+      "ema_pullback_period": 9,
+      "atr_period": 14,
+      "rsi_period": 14,
+      "bb_period": 20,
+      "bb_std": 2.0
+    },
+    "reward_config": {
+      "correct_veto_reward": 0.35,
+      "missed_winner_penalty": -0.15,
+      "ideal_hold_max": 30,
+      "moderate_hold_max": 60,
+      "long_hold_max": 120,
+      "moderate_hold_penalty": -0.05,
+      "long_hold_penalty": -0.15,
+      "time_exit_penalty": -0.3,
+      "dd_warning_threshold": 3.0,
+      "dd_danger_threshold": 5.0,
+      "dd_warning_multiplier": 2.0,
+      "dd_danger_multiplier": 3.0,
+      "losing_streak_extra_penalty": -0.15,
+      "winning_streak_bonus": 0.1,
+      "streak_lookback": 3,
+      "reward_min": -2.0,
+      "reward_max": 2.0
+    }
+  },
+  {
+    "timestamp": "2026-02-20T07:05:24.980267+00:00",
+    "label": "iter-3-max_hold_minutes",
+    "model_path": "models/forge_agent/best_model.zip",
+    "instrument": "XAU_USD",
+    "parameters": 20771,
+    "training_timesteps": 100000,
+    "eval_episodes": 10,
+    "metrics": {
+      "win_rate": 0.0,
+      "take_rate": 0.9583,
+      "profit_factor": 0.0,
+      "max_drawdown": 7.7632,
+      "avg_r_multiple": -0.058,
+      "sharpe_ratio": -4930000.0,
+      "mean_episode_reward": -4.93,
+      "total_trades_taken": 690,
+      "total_signals_seen": 690
+    },
+    "failures": {
+      "total_signals": 720,
+      "total_taken": 690,
+      "total_vetoed": 30,
+      "total_wins": 0,
+      "total_losses": 690,
+      "exit_reasons": {
+        "sl_hit": 40,
+        "time_exit": 650
+      },
+      "worst_hours": [],
+      "volatility": {
+        "low": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "mid": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "high": {
+          "losses": 690,
+          "total": 690,
+          "loss_rate": 1.0
+        }
+      },
+      "trend_alignment": {
+        "aligned": {
+          "losses": 400,
+          "total": 400,
+          "loss_rate": 1.0
+        },
+        "counter": {
+          "losses": 290,
+          "total": 290,
+          "loss_rate": 1.0
+        }
+      },
+      "hold_duration": {
+        "very_fast_0_5min": 690,
+        "short_5_15min": 0,
+        "mid_15_30min": 0,
+        "long_30plus_min": 0
+      },
+      "direction": {
+        "buy": {
+          "losses": 350,
+          "total": 350,
+          "loss_rate": 1.0
+        },
+        "sell": {
+          "losses": 340,
+          "total": 340,
+          "loss_rate": 1.0
+        }
+      },
+      "high_spread": {
+        "losses": 40,
+        "total": 40,
+        "loss_rate": 1.0
+      },
+      "failure_clusters": [
+        {
+          "pattern": "fast_sl_hit",
+          "description": "SL hit <5min: 690/690 losses (100%)",
+          "impact": 690,
+          "suggestion": "widen sl_buffer_pips"
+        },
+        {
+          "pattern": "time_exits",
+          "description": "Time exits: 650/690 losses (94%)",
+          "impact": 650,
+          "suggestion": "reduce max_hold_minutes or tighten entry"
+        },
+        {
+          "pattern": "counter_trend",
+          "description": "Counter-H1-trend: 290/290 losses (100%)",
+          "impact": 290,
+          "suggestion": "require_h1_alignment"
+        },
+        {
+          "pattern": "high_spread",
+          "description": "Spread >4 pips: 40/40 losses (100%)",
+          "impact": 40,
+          "suggestion": "lower max_spread_pips"
+        }
+      ]
+    },
+    "iteration": 3,
+    "nudge": {
+      "iteration": 3,
+      "param": "max_hold_minutes",
+      "direction": -1,
+      "old_value": 120,
+      "new_value": 105,
+      "reason": "Time exits dominate \u2192 reduce max hold to cut stale trades",
+      "reverted": false
+    },
+    "env_config": {
+      "instrument": "XAU_USD",
+      "pip_value": 0.01,
+      "episode_length_days": 5,
+      "max_steps_per_episode": 200,
+      "max_hold_minutes": 105,
+      "risk_per_trade_pct": 2.0,
+      "initial_equity": 10000.0,
+      "max_drawdown_pct": 10.0,
+      "rr_ratio": 1.4,
+      "bias_lookback": 15,
+      "ema_pullback_period": 9,
+      "atr_period": 14,
+      "rsi_period": 14,
+      "bb_period": 20,
+      "bb_std": 2.0
+    },
+    "reward_config": {
+      "correct_veto_reward": 0.35,
+      "missed_winner_penalty": -0.15,
+      "ideal_hold_max": 30,
+      "moderate_hold_max": 60,
+      "long_hold_max": 120,
+      "moderate_hold_penalty": -0.05,
+      "long_hold_penalty": -0.15,
+      "time_exit_penalty": -0.3,
+      "dd_warning_threshold": 3.0,
+      "dd_danger_threshold": 5.0,
+      "dd_warning_multiplier": 2.0,
+      "dd_danger_multiplier": 3.0,
+      "losing_streak_extra_penalty": -0.15,
+      "winning_streak_bonus": 0.1,
+      "streak_lookback": 3,
+      "reward_min": -2.0,
+      "reward_max": 2.0
+    }
+  }
+]

@@ -177,6 +177,215 @@ class TestSignals:
         assert signal is None
 
 
+class TestDynamicZoneRole:
+    """Tests for S/R role-reversal (dynamic zone role).
+
+    When price breaks above a resistance zone, that zone flips to act as
+    support.  The signal direction should follow the dynamic role, not the
+    original zone classification.
+    """
+
+    def test_resistance_flips_to_support_buy(self):
+        """Resistance zone acts as support when price is above it → buy signal."""
+        # Resistance at 1.1000 — price has broken above it and pulls back
+        # Candle close is ABOVE 1.1000 with a long lower wick touching zone
+        zones = [SRZone(zone_type="resistance", price_level=1.1000, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.1010, 1.1025, 1.0995, 1.1020),
+        ]
+        # Body = 0.0010, lower_wick = 1.1010 - 1.0995 = 0.0015, ratio = 1.5 ✓
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+        assert signal.direction == "buy", (
+            "Price above resistance zone → zone acts as support → should buy"
+        )
+        assert "flipped support" in signal.reason
+
+    def test_support_flips_to_resistance_sell(self):
+        """Support zone acts as resistance when price is below it → sell signal."""
+        # Support at 1.0800 — price has broken below it
+        # Candle close is BELOW 1.0800 with a long upper wick touching zone
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0790, 1.0810, 1.0775, 1.0780),
+        ]
+        # Body = 0.0010, upper_wick = 1.0810 - 1.0790 = 0.0020, ratio = 2.0 ✓
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+        assert signal.direction == "sell", (
+            "Price below support zone → zone acts as resistance → should sell"
+        )
+        assert "flipped resistance" in signal.reason
+
+    def test_original_support_still_buy(self):
+        """Support zone still generates buy when price is at/above it (no flip)."""
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0835, 1.0795, 1.0830),
+        ]
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+        assert signal.direction == "buy"
+        # Not flipped — reason should say "support" not "flipped support"
+        assert "flipped" not in signal.reason
+
+    def test_original_resistance_still_sell(self):
+        """Resistance zone still generates sell when price is below it (no flip)."""
+        zones = [SRZone(zone_type="resistance", price_level=1.1000, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0990, 1.1010, 1.0975, 1.0980),
+        ]
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+        assert signal.direction == "sell"
+        assert "flipped" not in signal.reason
+
+    def test_weak_zone_filtered_by_min_strength(self):
+        """Zone with strength=1 is filtered when min_strength=2."""
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=1)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0835, 1.0795, 1.0830),
+        ]
+        signal = evaluate_signal(candles, zones, min_strength=2)
+        assert signal is None, "Weak zone (strength=1) should be filtered out"
+
+    def test_weak_zone_allowed_by_default(self):
+        """Zone with strength=1 passes with default min_strength=1."""
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=1)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0835, 1.0795, 1.0830),
+        ]
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+
+    def test_wick_ratio_filters_weak_wick(self):
+        """Candle with wick < 1.0× body is NOT a valid rejection wick."""
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        # Body = 0.0020, lower_wick = 0.0010 → ratio = 0.5 (below 1.0 threshold)
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0845, 1.0810, 1.0840),
+        ]
+        signal = evaluate_signal(candles, zones)
+        assert signal is None, "Weak wick (ratio < 1.0) should not trigger signal"
+
+    def test_wick_ratio_custom_loose(self):
+        """Same candle passes with a looser wick_ratio=0.4."""
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0845, 1.0810, 1.0840),
+        ]
+        signal = evaluate_signal(candles, zones, wick_ratio=0.4)
+        assert signal is not None
+
+
+class TestTrendFilter:
+    """Tests for H4 trend filter blocking counter-trend signals."""
+
+    def test_bullish_trend_blocks_sell(self):
+        """Sell signal at resistance is blocked when trend is bullish."""
+        zones = [SRZone(zone_type="resistance", price_level=1.1000, strength=3)]
+        # Candle below resistance with a sell wick
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0990, 1.1010, 1.0975, 1.0980),
+        ]
+        # Without trend filter → sell
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+        assert signal.direction == "sell"
+
+        # With bullish trend → blocked
+        signal = evaluate_signal(candles, zones, trend_direction="bullish")
+        assert signal is None
+
+    def test_bearish_trend_blocks_buy(self):
+        """Buy signal at support is blocked when trend is bearish."""
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0835, 1.0795, 1.0830),
+        ]
+        # Without trend filter → buy
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+        assert signal.direction == "buy"
+
+        # With bearish trend → blocked
+        signal = evaluate_signal(candles, zones, trend_direction="bearish")
+        assert signal is None
+
+    def test_bullish_trend_allows_buy(self):
+        """Buy signal passes when trend is bullish (with-trend)."""
+        zones = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0835, 1.0795, 1.0830),
+        ]
+        signal = evaluate_signal(candles, zones, trend_direction="bullish")
+        assert signal is not None
+        assert signal.direction == "buy"
+
+    def test_bearish_trend_allows_sell(self):
+        """Sell signal passes when trend is bearish (with-trend)."""
+        zones = [SRZone(zone_type="resistance", price_level=1.1000, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0990, 1.1010, 1.0975, 1.0980),
+        ]
+        signal = evaluate_signal(candles, zones, trend_direction="bearish")
+        assert signal is not None
+        assert signal.direction == "sell"
+
+    def test_flat_trend_allows_both(self):
+        """Both directions pass when trend is flat."""
+        # Buy at support
+        zones_s = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        candles_buy = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0835, 1.0795, 1.0830),
+        ]
+        signal = evaluate_signal(candles_buy, zones_s, trend_direction="flat")
+        assert signal is not None
+        assert signal.direction == "buy"
+
+        # Sell at resistance
+        zones_r = [SRZone(zone_type="resistance", price_level=1.1000, strength=3)]
+        candles_sell = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0990, 1.1010, 1.0975, 1.0980),
+        ]
+        signal = evaluate_signal(candles_sell, zones_r, trend_direction="flat")
+        assert signal is not None
+        assert signal.direction == "sell"
+
+    def test_none_trend_allows_both(self):
+        """Both directions pass when trend_direction is None (default)."""
+        zones_s = [SRZone(zone_type="support", price_level=1.0800, strength=3)]
+        candles_buy = [
+            _make_candle("2025-02-01T08:00:00Z", 1.0820, 1.0835, 1.0795, 1.0830),
+        ]
+        signal = evaluate_signal(candles_buy, zones_s, trend_direction=None)
+        assert signal is not None
+
+    def test_trend_filter_with_flipped_zone(self):
+        """Trend filter works correctly with a flipped zone.
+
+        Resistance zone + price above it → flipped support → buy signal.
+        Bearish trend should block this buy.
+        """
+        zones = [SRZone(zone_type="resistance", price_level=1.1000, strength=3)]
+        candles = [
+            _make_candle("2025-02-01T08:00:00Z", 1.1010, 1.1025, 1.0995, 1.1020),
+        ]
+        # Without filter → buy (flipped support)
+        signal = evaluate_signal(candles, zones)
+        assert signal is not None
+        assert signal.direction == "buy"
+
+        # Bearish trend blocks the flipped-support buy
+        signal = evaluate_signal(candles, zones, trend_direction="bearish")
+        assert signal is None
+
+        # Bullish trend allows it
+        signal = evaluate_signal(candles, zones, trend_direction="bullish")
+        assert signal is not None
+        assert signal.direction == "buy"
+
+
 class TestSessionFilter:
     def test_session_filter_in(self):
         """True during London/NY overlap."""

@@ -18,6 +18,7 @@ from app.strategy.indicators import (
 from app.strategy.models import CandleData, EntrySignal, INSTRUMENT_PIP_VALUES
 from app.strategy.mr_signals import evaluate_mr_entry
 from app.strategy.sr_zones import detect_sr_zones
+from app.strategy.trend import detect_trend
 from app.risk.mr_sl_tp import calculate_mr_sl, calculate_mr_tp
 
 logger = logging.getLogger("forgetrade")
@@ -64,6 +65,20 @@ class MeanReversionStrategy:
             "strategy": "Mean Reversion",
             "pair": config.trade_pair,
             "checks": {},
+        }
+
+        # ── 0. Fetch H4 candles → trend filter ──────────────────────
+        h4_raw = await broker.fetch_candles(config.trade_pair, "H4", count=60)
+        h4 = [
+            CandleData(c.time, c.open, c.high, c.low, c.close, c.volume)
+            for c in h4_raw
+        ]
+        trend = detect_trend(h4)
+        insight["trend"] = {
+            "direction": trend.direction,
+            "ema_fast": round(trend.ema_fast_value, 5),
+            "ema_slow": round(trend.ema_slow_value, 5),
+            "slope": round(trend.slope, 5),
         }
 
         # ── 1. Fetch H1 candles → ADX + S/R zones ───────────────────
@@ -170,6 +185,27 @@ class MeanReversionStrategy:
                 insight["result"] = "rsi_neutral"
             else:
                 insight["result"] = "no_zone"
+            self.last_insight = insight
+            return None
+
+        # ── Trend filter: block counter-trend MR signals ────────────
+        if trend.direction == "bearish" and mr_signal.direction == "buy":
+            logger.debug(
+                "MeanReversion: H4 trend bearish — blocking buy signal"
+            )
+            insight["checks"]["sl_valid"] = False
+            insight["checks"]["risk_calculated"] = False
+            insight["result"] = "counter_trend_blocked"
+            self.last_insight = insight
+            return None
+
+        if trend.direction == "bullish" and mr_signal.direction == "sell":
+            logger.debug(
+                "MeanReversion: H4 trend bullish — blocking sell signal"
+            )
+            insight["checks"]["sl_valid"] = False
+            insight["checks"]["risk_calculated"] = False
+            insight["result"] = "counter_trend_blocked"
             self.last_insight = insight
             return None
 

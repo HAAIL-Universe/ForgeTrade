@@ -1,0 +1,17 @@
+{
+  "iteration": 4,
+  "phase": "training",
+  "detail": "Training 100,000 timesteps\u2026",
+  "best_avg_r": 0.0028,
+  "best_iteration": 2,
+  "last_nudge": {
+    "iteration": 4,
+    "param": "rr_ratio",
+    "direction": -1,
+    "old_value": 1.4,
+    "new_value": 1.3,
+    "reason": "Fast SL hits \u2192 tighter R:R to reduce required move size",
+    "reverted": false
+  },
+  "updated_at": "2026-02-20T07:05:54.993268+00:00"
+}

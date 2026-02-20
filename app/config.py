@@ -99,6 +99,8 @@ def load_streams() -> list[StreamConfig]:
                     session_start_utc=s.get("session_start_utc", 7),
                     session_end_utc=s.get("session_end_utc", 21),
                     enabled=s.get("enabled", True),
+                    rr_ratio=s.get("rr_ratio"),
+                    rl_filter=s.get("rl_filter"),
                 )
                 for s in raw_streams
             ]

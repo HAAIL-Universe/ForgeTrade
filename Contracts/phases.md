@@ -1402,4 +1402,1746 @@ Both `sr-swing` and `mr-range` trade EUR/USD. They could potentially signal at t
 
 ---
 
+## Phase 13 — Reinforcement Learning Trade Filter (XAU/USD — "ForgeAgent")
+
+### A) Purpose and Problem Statement
+
+The momentum-bias micro-scalp strategy (Phase 10/11) generates entry signals based on a fixed rule pipeline: bias detection → EMA pullback → confirmation pattern → SL/TP calculation. Every signal that passes all checks is executed. The problem is that **not all passing signals are equal in quality**, and the rule-based system has no mechanism to distinguish between:
+
+- A pullback to EMA(9) during a strong, clean directional move with tight consolidation at a significant structural level → **high-quality setup**
+- A pullback to EMA(9) after an overextended move near a round number, late in the session, with widening spreads and choppy M1 candles → **low-quality setup that will get stopped out**
+
+Both pass every check. Both get traded. The second one produces losses like the XAU/USD LONG at 5000.25 that hit SL at 4992.95 in 15 minutes for a -$3,124 loss.
+
+**Reinforcement Learning (RL) adds a learned quality filter** on top of the existing rule-based pipeline. The RL agent — **ForgeAgent** — doesn't replace the strategy logic. It answers one question: *"Given everything I can observe about the current market state, should I let this trade through or veto it?"*
+
+The agent learns this judgment from thousands of simulated trades on historical Gold data, discovering patterns that no hand-coded rule can capture — session-dependent behaviour, volatility regime shifts, price psychology at round numbers, spread-to-ATR cost ratios, and the complex interactions between all of these.
+
+#### Why RL and Not a Simple Classifier
+
+A rules-based filter (e.g., "don't trade after 21:00 UTC") is brittle — it encodes a single observation as a hard boundary. RL learns a **continuous confidence surface** across the entire state space. It might learn that trading at 21:30 is bad when ATR is declining and price is near a round number, but acceptable at 21:30 when ATR is spiking from a news event with strong directional momentum. No hand-written rule captures this nuance.
+
+A traditional ML classifier (logistic regression, random forest) could learn some of this, but it treats each trade independently. RL is specifically designed for **sequential decision-making** — it considers the impact of each decision on future outcomes (e.g., "if I take this marginal trade and lose, my drawdown increases, which affects my next decision"). The Markov Decision Process formulation naturally handles account state, recent performance streaks, and compounding effects.
+
+### B) Architecture Overview
+
+```
+                                    ┌─────────────────────────────┐
+                                    │     ForgeAgent (RL Model)   │
+                                    │                             │
+   ┌─────────────┐                  │  ┌───────────────────────┐  │
+   │  Historical  │──── train ──────▶  │   PPO Policy Network  │  │
+   │  Gold Data   │                 │  │   (Actor + Critic)    │  │
+   └─────────────┘                  │  └───────────┬───────────┘  │
+                                    │              │              │
+   ┌─────────────┐                  │              ▼              │
+   │  Gym Env    │◀─── step ────────│      action: TAKE / VETO   │
+   │ (Simulator) │──── state ──────▶│                             │
+   └─────────────┘                  └─────────────────────────────┘
+                                                   │
+                                                   │ (deploy)
+                                                   ▼
+   ┌─────────────────────────────────────────────────────────────────┐
+   │                        Live Engine                              │
+   │                                                                 │
+   │  TrendScalpStrategy.evaluate() → StrategyResult                 │
+   │      │                                                          │
+   │      ▼                                                          │
+   │  ForgeAgent.assess(state_vector) → confidence (0.0 – 1.0)      │
+   │      │                                                          │
+   │      ├── confidence > threshold → EXECUTE trade                 │
+   │      └── confidence ≤ threshold → VETO (log and skip)           │
+   │                                                                 │
+   └─────────────────────────────────────────────────────────────────┘
+```
+
+### C) Phase 13 Sub-Phase Breakdown
+
+Phase 13 is divided into seven sequential sub-phases, each with its own acceptance criteria. They must be built and verified in order.
+
+| Sub-Phase | Name | Depends On | Est. Complexity |
+|-----------|------|-----------|-----------------|
+| **13.0** | Data Collection Pipeline | Phases 10-12 complete, OANDA API access | Low-Medium |
+| **13.1** | Feature Engineering (State Vector) | 13.0 | Medium |
+| **13.2** | Gym Environment Design | 13.0, 13.1 | High |
+| **13.3** | Reward Shaping | 13.2 | High (most critical design work) |
+| **13.4** | Neural Network Architecture | 13.2, 13.3 | Medium |
+| **13.5** | Training Pipeline | 13.1–13.4 | Medium |
+| **13.6** | Evaluation & Walk-Forward Validation | 13.5 | Medium |
+| **13.7** | Live Integration (Shadow → Active) | 13.6 passing evaluation thresholds | Low |
+
+---
+
+### Phase 13.0 — Data Collection Pipeline
+
+#### Purpose
+
+Download, validate, store, and serve historical XAU/USD candle data across multiple timeframes for RL training. This is the foundation everything else depends on — without sufficient quality data, the agent cannot learn meaningful patterns.
+
+#### Data Requirements
+
+| Timeframe | Purpose | Candles Needed | Period | Source |
+|-----------|---------|---------------|--------|--------|
+| **M5** | Primary decision timeframe (matches live scalp cadence) | ~175,000 | 12 months | OANDA v20 REST API |
+| **M1** | Intra-candle simulation for trade outcomes (SL/TP hit detection) | ~520,000 | 12 months | OANDA v20 REST API |
+| **H1** | Trend/volatility context features | ~6,000 | 12 months | OANDA v20 REST API |
+| **M15** | RSI/BB context for mean-reversion regime detection | ~35,000 | 12 months | OANDA v20 REST API |
+
+**Total**: ~736,000 candles across 4 timeframes. OANDA allows 5,000 candles per request, so this requires ~148 paginated requests. At a conservative 2 requests/second (well within the 120 req/s limit), the full download takes ~75 seconds.
+
+#### Storage Format
+
+```
+data/
+  historical/
+    XAU_USD/
+      M1.parquet       # ~520k rows, ~25MB compressed
+      M5.parquet       # ~175k rows, ~8MB compressed
+      M15.parquet      # ~35k rows, ~2MB compressed
+      H1.parquet       # ~6k rows, <1MB compressed
+      metadata.json    # download timestamps, date ranges, row counts
+```
+
+Parquet format chosen for:
+- Fast columnar reads (training iterates over time windows, not individual candles)
+- Compression (~10x vs CSV)
+- Schema enforcement (typed columns)
+- Native pandas/polars support
+
+#### `metadata.json` Schema
+
+```json
+{
+  "instrument": "XAU_USD",
+  "download_date": "2026-02-20T14:30:00Z",
+  "date_range": {
+    "start": "2025-02-20T00:00:00Z",
+    "end": "2026-02-20T00:00:00Z"
+  },
+  "timeframes": {
+    "M1":  {"rows": 521280, "file": "M1.parquet",  "size_mb": 24.7},
+    "M5":  {"rows": 174720, "file": "M5.parquet",  "size_mb": 8.3},
+    "M15": {"rows": 34944,  "file": "M15.parquet", "size_mb": 1.7},
+    "H1":  {"rows": 5832,   "file": "H1.parquet",  "size_mb": 0.3}
+  },
+  "pip_value": 0.01,
+  "data_quality": {
+    "gaps_detected": 12,
+    "gaps_filled": 12,
+    "weekend_rows_removed": true
+  }
+}
+```
+
+#### Data Quality Pipeline
+
+Raw OANDA data has issues that must be cleaned before training:
+
+1. **Weekend gaps**: Markets close Friday 21:00 UTC → Sunday 22:00 UTC. Remove any candles in this window (OANDA sometimes returns stale prices).
+2. **Missing candles**: If a M5 candle is missing (no ticks during that period), forward-fill from the previous candle's close (open=high=low=close=prev_close, volume=0). Mark as synthetic.
+3. **Spike detection**: If a single candle's high-low range exceeds 10× the 20-period ATR, flag as a data error or flash crash. Log but don't remove (RL should see extreme events).
+4. **Timezone normalization**: All timestamps stored as UTC. Verify OANDA's `"time"` field is ISO 8601 with `Z` suffix.
+5. **Volume validation**: OANDA tick volume should be > 0 for non-weekend candles. Flag zero-volume periods (may indicate illiquid conditions).
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **Download script** | `app/rl/data_collector.py` | Async function `download_historical(instrument, granularity, start, end, broker) -> pd.DataFrame`. Paginates OANDA's `GET /instruments/{instrument}/candles` endpoint using `from`/`to` params. Handles 5000-candle-per-request limit. Returns DataFrame with columns: `time, open, high, low, close, volume`. |
+| 2 | **Data cleaning** | `app/rl/data_collector.py` | `clean_candles(df) -> df`. Weekend removal, gap filling, spike flagging, timezone normalization. |
+| 3 | **Storage** | `app/rl/data_collector.py` | `save_to_parquet(df, path)` / `load_from_parquet(path) -> df`. Metadata generation. |
+| 4 | **CLI command** | `app/rl/data_collector.py` | Runnable as `python -m app.rl.data_collector --instrument XAU_USD --months 12`. Fetches all 4 timeframes, cleans, saves, reports. |
+| 5 | **Data splits** | `app/rl/data_collector.py` | `split_data(df, train_pct=0.7, val_pct=0.15, test_pct=0.15) -> (train_df, val_df, test_df)`. Chronological split (no shuffling — time series must be ordered). Train = first 70% of dates, validation = next 15%, test = final 15%. |
+| 6 | **Tests** | `tests/test_rl_data.py` | Data cleaning tests, gap fill tests, split ratio verification, parquet round-trip. |
+
+#### Acceptance Criteria
+
+1. Running `python -m app.rl.data_collector --instrument XAU_USD --months 12` downloads all 4 timeframes to `data/historical/XAU_USD/`.
+2. Each parquet file has correct schema: `time (datetime64), open (float64), high (float64), low (float64), close (float64), volume (int64)`.
+3. No weekend candles are present in any file.
+4. Gap-filled candles are marked with `volume=0`.
+5. `metadata.json` is generated with correct row counts and date ranges.
+6. Chronological splits maintain temporal ordering (no future data leakage).
+7. Download is resumable — if interrupted, re-running skips already-downloaded date ranges.
+
+#### Dependency Changes
+
+- Add `pandas >= 2.0` to `requirements.txt` (data manipulation)
+- Add `pyarrow >= 14.0` to `requirements.txt` (parquet backend)
+
+---
+
+### Phase 13.1 — Feature Engineering (State Vector)
+
+#### Purpose
+
+Define and implement the **state representation** — the vector of numbers the RL agent observes at each decision point. This is the single most important design decision in the entire RL system. A state vector that fails to capture the distinction between good and bad setups means the agent literally *cannot* learn, regardless of how sophisticated the neural network or reward function is.
+
+#### Design Principles
+
+1. **Features must be observable at decision time** — no future information leakage. Every feature must be computable from data available *before* the trade decision.
+2. **Features must be normalized** — raw prices (e.g., $5000.25) are meaningless across different time periods when gold was at $1800 vs $2500. All features must be scale-invariant.
+3. **Features should be uncorrelated where possible** — redundant features (e.g., RSI and Stochastic, which measure the same thing) waste capacity and slow convergence.
+4. **Domain knowledge beats raw data** — feeding raw OHLCV to the agent and hoping it learns indicators from scratch wastes millions of timesteps. We pre-compute meaningful indicators using the existing `indicators.py` functions and feed the agent *interpreted* market state.
+5. **Cyclical features need special encoding** — hour-of-day 23 and hour 1 are close together but numerically distant. Sine/cosine encoding makes this relationship visible to the neural network.
+
+#### State Vector Specification (27 Features)
+
+```python
+@dataclass
+class ForgeState:
+    """The observation the RL agent receives at each decision point.
+    
+    All features are normalized to approximately [-1, +1] or [0, 1] range.
+    Computed from M5, M1, H1, and M15 candle data plus account state.
+    """
+    
+    # ─── GROUP 1: Trend / Momentum (6 features) ─────────────────────
+    
+    m5_ema9_distance: float
+    # (price - EMA(9)) / ATR(14)
+    # Measures how far price is from the pullback zone.
+    # Negative = price below EMA (potential buy pullback in uptrend)
+    # Positive = price above EMA (potential sell pullback in downtrend)
+    # Normalized by ATR so the scale is consistent across volatility regimes.
+    # Typical range: [-3.0, +3.0]. Beyond ±2 is overextended.
+    
+    m5_ema_slope: float
+    # (EMA(9)[now] - EMA(9)[5 bars ago]) / ATR(14)
+    # Momentum strength — how fast the short-term trend is moving.
+    # Steep positive = strong bullish momentum. Near zero = stalling.
+    # Normalized by ATR.
+    # Typical range: [-2.0, +2.0].
+    
+    m5_bias_direction: float
+    # -1.0 (bearish), 0.0 (flat), +1.0 (bullish)
+    # Output of detect_scalp_bias() mapped to numeric.
+    # This is the existing strategy's trend gate answer.
+    
+    m5_consecutive_candles: float
+    # Number of consecutive M5 candles in the bias direction / 10
+    # Measures momentum persistence. 
+    # 8 green candles in a row = 0.8 (strong trending).
+    # 2 green candles = 0.2 (just started or choppy).
+    # Normalized by /10 to keep in [0, 1] range.
+    
+    h1_trend_agreement: float
+    # +1.0 if H1 EMA(21) > EMA(50) and bias is bullish (agreement)
+    # -1.0 if H1 EMA(21) < EMA(50) and bias is bearish (agreement)
+    # 0.0 if H1 trend disagrees with M5 bias (conflict — dangerous)
+    # Multi-timeframe alignment is one of the strongest edge signals.
+    
+    h1_ema_slope: float
+    # (H1 EMA(21)[now] - H1 EMA(21)[3 bars ago]) / H1 ATR(14)
+    # Higher timeframe momentum. Positive = H1 uptrend accelerating.
+    # Typical range: [-1.5, +1.5].
+    
+    # ─── GROUP 2: Volatility (4 features) ───────────────────────────
+    
+    m5_atr_percentile: float
+    # Percentile rank of current M5 ATR(14) within last 100 ATR values.
+    # Range: [0.0, 1.0]. 
+    # 0.9 = current volatility is in the top 10% of recent history (high vol).
+    # 0.1 = very quiet market (low vol — spreads may be wide, moves small).
+    # Captures volatility regime without caring about absolute dollar values.
+    
+    m5_bb_width: float
+    # (BB_upper - BB_lower) / price
+    # Bollinger Band width as percentage of price.
+    # Narrow = squeeze (potential breakout coming).
+    # Wide = volatile (big moves, but also big reversals).
+    # Typical range: [0.002, 0.02] for Gold.
+    
+    m5_bb_position: float
+    # (price - BB_lower) / (BB_upper - BB_lower)
+    # Where price sits within the Bollinger Bands.
+    # 0.0 = at lower band, 0.5 = at midpoint, 1.0 = at upper band.
+    # >1.0 = above upper band (overextended). <0.0 = below lower band.
+    
+    vol_expansion_rate: float
+    # ATR(14)[now] / ATR(14)[10 bars ago]
+    # Is volatility expanding (>1.0) or contracting (<1.0)?
+    # Expanding vol + trend = good for scalps.
+    # Expanding vol + chop = danger (whipsaws).
+    # Typical range: [0.5, 2.0]. Clipped at bounds.
+    
+    # ─── GROUP 3: RSI / Oscillator (2 features) ─────────────────────
+    
+    m15_rsi_norm: float
+    # RSI(14) on M15 mapped to [-1, +1]:  (RSI - 50) / 50
+    # -1.0 = RSI at 0 (maximally oversold)
+    # 0.0 = RSI at 50 (neutral)
+    # +1.0 = RSI at 100 (maximally overbought)
+    # Oversold in a downtrend = potential reversal (be cautious with sells).
+    # Oversold in an uptrend = perfect buy dip opportunity.
+    
+    m5_rsi_norm: float
+    # RSI(14) on M5 mapped to [-1, +1]: same normalization.
+    # Faster oscillator — captures short-term exhaustion.
+    
+    # ─── GROUP 4: Candle Structure (4 features) ─────────────────────
+    
+    m5_body_ratio: float
+    # abs(close - open) / (high - low) of the latest M5 candle.
+    # 1.0 = full body (no wicks) — strong conviction candle.
+    # 0.0 = doji (all wick) — indecision.
+    # Range: [0.0, 1.0].
+    
+    m5_upper_wick_ratio: float
+    # (high - max(open, close)) / (high - low)
+    # Selling pressure in the candle. High upper wick = sellers pushed back.
+    # Range: [0.0, 1.0].
+    
+    m5_lower_wick_ratio: float
+    # (min(open, close) - low) / (high - low)
+    # Buying pressure in the candle. High lower wick = buyers pushed back.
+    # Range: [0.0, 1.0].
+    
+    m1_avg_body_ratio: float
+    # Average body_ratio of last 3 M1 candles.
+    # Confirmation quality — are the last few M1 candles decisive or indecisive?
+    # Range: [0.0, 1.0].
+    
+    # ─── GROUP 5: Session / Time (4 features) ───────────────────────
+    
+    hour_sin: float
+    # sin(2π × hour / 24)
+    # Cyclical encoding of hour-of-day.
+    # Makes 23:00 and 01:00 close together in feature space.
+    # Range: [-1.0, +1.0].
+    
+    hour_cos: float
+    # cos(2π × hour / 24)
+    # Second component of cyclical encoding.
+    # Together with hour_sin, uniquely identifies any hour.
+    # Range: [-1.0, +1.0].
+    
+    day_of_week: float
+    # Day of week / 4.0 (Monday=0, Friday=4)
+    # Gold tends to trend on Monday/Tuesday and mean-revert Thursday/Friday.
+    # Range: [0.0, 1.0].
+    
+    minutes_in_session: float
+    # Minutes since session open / total session minutes
+    # 0.0 = session just opened, 1.0 = session about to close.
+    # Late session = higher risk of erratic moves.
+    # Range: [0.0, 1.0].
+    
+    # ─── GROUP 6: Spread / Cost (2 features) ────────────────────────
+    
+    spread_to_atr: float
+    # current_spread / ATR(14)
+    # Cost of entry relative to expected move size.
+    # High ratio = spread eating into potential profit.
+    # 0.02 = spread is 2% of ATR (excellent). 0.15 = 15% (terrible).
+    # Typical range: [0.01, 0.20]. Clipped at 0.20.
+    
+    spread_pips_norm: float
+    # current_spread_pips / MAX_SPREAD_PIPS (8.0)
+    # How close the spread is to the strategy's hard rejection limit.
+    # 0.0 = zero spread (impossible but theoretical best).
+    # 1.0 = at the hard limit (about to be rejected anyway).
+    # Range: [0.0, 1.0+].
+    
+    # ─── GROUP 7: Price Structure (3 features) ──────────────────────
+    
+    dist_to_round_50: float
+    # Distance to nearest $50 level / ATR(14)
+    # Gold reacts strongly at $X000, $X050, $X100, etc.
+    # Near a round number = potential support/resistance/trap.
+    # 0.0 = exactly at a round number. >2.0 = far from any.
+    # Range: [0.0, ~5.0]. Clipped at 5.0.
+    
+    dist_to_round_100: float
+    # Distance to nearest $100 level / ATR(14)
+    # Major psychological levels ($5000, $5100, $5200).
+    # Stronger reaction zones than $50 levels.
+    # Same normalization.
+    
+    dist_to_nearest_sr: float
+    # Distance to nearest S/R zone (from sr_zones.py) / ATR(14)
+    # 0.0 = at a zone. >3.0 = no nearby structural level.
+    # Trading at a zone = higher probability of bounce/rejection.
+    # Range: [0.0, ~10.0]. Clipped at 10.0.
+    
+    # ─── GROUP 8: Account / Performance (2 features) ────────────────
+    
+    current_drawdown: float
+    # Current drawdown from peak equity / max_drawdown_pct
+    # 0.0 = at equity peak (no drawdown).
+    # 1.0 = at the circuit breaker limit.
+    # The agent should learn to be more conservative when drawdown is high.
+    # Range: [0.0, 1.0+].
+    
+    recent_trade_performance: float
+    # Average R-multiple of last 5 trades, clipped to [-2, +2] then / 2
+    # Positive = recent winners (confidence), negative = recent losers.
+    # The agent may learn streak-awareness — tighten after losing streaks.
+    # Range: [-1.0, +1.0].
+```
+
+**Total: 27 features.** All normalized to approximately [-1, +1] or [0, 1]. No raw prices, no absolute dollar values. The agent sees *patterns in relative market structure*, not price levels.
+
+#### Feature Computation Flow
+
+```
+At each decision point (when TrendScalpStrategy produces a signal):
+
+1. Gather raw data (already fetched by strategy):
+   ├── M5 candles (last 100) → from broker.fetch_candles()
+   ├── M1 candles (last 20)  → from broker.fetch_candles()
+   ├── H1 candles (last 50)  → from broker.fetch_candles()
+   └── M15 candles (last 30) → from broker.fetch_candles()
+
+2. Compute indicators (reuse existing functions):
+   ├── calculate_ema(m5, 9)      → EMA(9) series
+   ├── calculate_atr(m5, 14)     → M5 ATR
+   ├── calculate_atr(h1, 14)     → H1 ATR
+   ├── calculate_rsi(m5, 14)     → M5 RSI
+   ├── calculate_rsi(m15, 14)    → M15 RSI
+   ├── calculate_bollinger(m5, 20, 2.0) → M5 BB
+   ├── calculate_ema(h1, 21)     → H1 fast EMA
+   ├── calculate_ema(h1, 50)     → H1 slow EMA
+   └── detect_sr_zones(h1)       → nearest S/R zone
+
+3. Build state vector:
+   └── ForgeStateBuilder.build(m5, m1, h1, m15, indicators, account_state)
+       → np.ndarray of shape (27,)
+```
+
+#### Why These 27 Features and Not More
+
+- **Group 1 (Trend)**: Captures whether the trade is with or against momentum, at multiple timeframes. The #1 predictor of scalp success.
+- **Group 2 (Volatility)**: Captures whether the market environment is suitable for scalping. High ATR + clean trend = good. High ATR + chop = bad.
+- **Group 3 (RSI)**: Captures momentum exhaustion. Buying when RSI is already at 75 on M15 (overbought) has lower success than buying at RSI 40 (room to run).
+- **Group 4 (Candle Structure)**: Captures the quality of the confirmation pattern. A full-body engulfing candle is more reliable than a doji with a small body.
+- **Group 5 (Time)**: Captures session-dependent behaviour without hard-coding session boundaries. The agent learns the gradient from data.
+- **Group 6 (Spread)**: Captures transaction cost pressure. A signal with 6-pip spread on Gold is marginal even if everything else looks good.
+- **Group 7 (Price Structure)**: Captures psychological and technical levels. The agent learns round-number traps and S/R zone proximity effects.
+- **Group 8 (Account)**: Captures risk context. The agent should be more selective when drawdown is high or after a losing streak.
+
+Any fewer features and the agent can't distinguish good from bad setups. Any more and training becomes slow and overfit-prone. 27 is in the sweet spot for a 2-layer policy network with 64 units per layer.
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **State dataclass** | `app/rl/features.py` | `ForgeState` with 27 fields + `to_array() -> np.ndarray` method. |
+| 2 | **State builder** | `app/rl/features.py` | `ForgeStateBuilder` class with `build(m5_candles, m1_candles, h1_candles, m15_candles, account_state) -> ForgeState`. Calls existing indicator functions, normalizes, clips outliers. |
+| 3 | **Normalization utilities** | `app/rl/features.py` | `percentile_rank(values, current)`, `cyclical_encode(value, max_value)`, `clip_feature(value, low, high)`. |
+| 4 | **Price structure helpers** | `app/rl/features.py` | `distance_to_round_level(price, multiple) -> float` (e.g., multiple=50 for $50 levels). |
+| 5 | **Tests** | `tests/test_rl_features.py` | Feature normalization tests, edge case tests (zero ATR, empty candles), round-trip from candle data to state vector. |
+
+#### Acceptance Criteria
+
+1. `ForgeStateBuilder.build()` produces a `np.ndarray` of shape `(27,)` with dtype `float32`.
+2. All features are in their specified ranges (with clipping applied).
+3. Cyclical time encoding: `hour_sin` and `hour_cos` for hour 0 and hour 24 produce identical values.
+4. `m5_bb_position` is 0.0 when price equals lower band, 1.0 at upper band.
+5. `dist_to_round_50` is 0.0 when gold price is exactly $5000.00.
+6. Features computed from synthetic ranging data produce different values than features from synthetic trending data (the state vector is discriminative).
+7. No NaN or Inf values in any output vector (all edge cases handled).
+
+---
+
+### Phase 13.2 — Gym Environment Design
+
+#### Purpose
+
+Build a `gymnasium`-compatible simulation environment that replays historical Gold candle data, presents state vectors to the RL agent at each decision point, simulates trade execution (entry, SL hit, TP hit, or time exit), and computes rewards. This is the "virtual market" the agent trains in.
+
+#### Environment Specification
+
+```python
+class ForgeTradeEnv(gymnasium.Env):
+    """Simulated Gold scalping environment for RL training.
+    
+    Observation space: Box(27,) — the ForgeState vector
+    Action space: Discrete(2) — 0=VETO, 1=TAKE
+    
+    The environment does NOT ask the agent "should I buy or sell?" 
+    The existing TrendScalpStrategy already determines direction.
+    The agent only decides: "should I allow this trade or block it?"
+    This is a BINARY CLASSIFICATION with sequential state dependence.
+    
+    Episode: One complete pass through a contiguous block of trading
+    days (configurable: 1 day, 1 week, or 1 month per episode).
+    
+    Step: One M5 candle where the rule-based strategy WOULD produce 
+    a signal. Non-signal candles are skipped (no decision needed).
+    """
+```
+
+#### Why Discrete(2) Not Discrete(3)
+
+The existing strategy already determines BUY vs SELL vs NO_SIGNAL. The RL agent is layered **on top** — it only sees timesteps where the strategy produced a signal. Its job is binary: **TAKE** or **VETO**. This dramatically simplifies the learning problem:
+
+- Discrete(3) with BUY/SELL/HOLD would mean the agent must learn **when AND what direction** to trade — a much harder problem requiring millions of timesteps.
+- Discrete(2) with TAKE/VETO means the agent only learns **quality assessment** — which setups to let through and which to block. This converges in 100K-500K timesteps.
+
+The agent never contradicts the strategy's direction. It only gates on quality.
+
+#### Episode Structure
+
+```
+Episode start:
+  ├── Select a random contiguous date range from training data
+  │   (e.g., 5 trading days = 1 business week)
+  ├── Initialize account state (equity, drawdown=0, trade_history=[])
+  └── Scroll through M5 candles chronologically
+
+At each M5 candle:
+  ├── Run rule-based signal detection offline:
+  │   ├── detect_scalp_bias() on recent M1 data
+  │   ├── EMA(9) pullback check
+  │   └── Confirmation pattern check
+  │
+  ├── If NO signal → skip candle (no decision, no reward)
+  │
+  ├── If SIGNAL exists:
+  │   ├── Build state vector from current market data
+  │   ├── Present state to agent → agent returns action (0=VETO, 1=TAKE)
+  │   │
+  │   ├── If VETO (action=0):
+  │   │   └── Reward = HOLD_REWARD (small positive, see reward section)
+  │   │   └── Advance to next signal
+  │   │
+  │   └── If TAKE (action=1):
+  │       ├── Simulate trade execution:
+  │       │   ├── Entry at current M5 close
+  │       │   ├── SL from calculate_scalp_sl()
+  │       │   ├── TP from calculate_scalp_tp()
+  │       │   ├── Scan forward through M1 candles:
+  │       │   │   ├── Each M1 candle: check if high >= TP (if LONG)
+  │       │   │   │                    or if low <= TP (if SHORT)
+  │       │   │   ├── Each M1 candle: check if low <= SL (if LONG)
+  │       │   │   │                    or if high >= SL (if SHORT)
+  │       │   │   ├── If both SL and TP hit on same candle → pessimistic:
+  │       │   │   │   assume SL hit first (conservative bias)
+  │       │   │   └── If max_hold_candles exceeded → exit at current close
+  │       │   ├── Calculate realized P&L
+  │       │   └── Calculate R-multiple: P&L / risk_amount
+  │       ├── Reward = f(R_multiple, hold_time, drawdown) (see reward section)
+  │       └── Update account state (equity, drawdown, trade_history)
+  │
+  └── Episode ends when:
+      ├── All M5 candles in the date range are exhausted, OR
+      ├── Account drawdown exceeds max_drawdown_pct (circuit breaker), OR
+      └── Max steps per episode reached (safety cap)
+```
+
+#### M1-Resolution Trade Simulation
+
+This is the critical detail that makes the simulation realistic. When the agent takes a trade, we don't just check the next M5 candle for SL/TP — we **scan through every M1 candle** within the trade's lifetime to detect exactly when SL or TP is hit:
+
+```python
+def simulate_trade(
+    entry_price: float,
+    direction: str,       # "buy" or "sell"
+    sl: float,
+    tp: float,
+    m1_candles: list[CandleData],  # M1 candles AFTER entry
+    max_hold_minutes: int = 120,   # Force exit after 2 hours
+    pip_value: float = 0.01,
+) -> TradeOutcome:
+    """Simulate a trade through M1 candle data.
+    
+    Scans each M1 candle to check SL/TP hit.
+    Uses pessimistic fill assumption: if both SL and TP could be hit
+    on the same candle (high >= TP and low <= SL for a LONG), assume
+    SL was hit first. This prevents overly optimistic backtesting.
+    
+    Returns:
+        TradeOutcome(
+            exit_price: float,
+            exit_reason: "sl_hit" | "tp_hit" | "time_exit",
+            hold_minutes: int,
+            pnl_pips: float,
+            r_multiple: float,
+        )
+    """
+```
+
+**Why M1 and not M5 simulation?** On Gold, a M5 candle can have a $5+ range. An SL set $3 below entry could be hit and then price recovers — all within one M5 candle. If we only checked M5, we'd miss the SL hit and show a winning trade that would have been a loss in reality. M1 simulation catches these intra-candle moves with much higher fidelity.
+
+**Pessimistic fill assumption**: When a single M1 candle's range covers both SL and TP (extremely volatile candle), we assume SL was hit first. This creates a conservative training signal — the agent learns to avoid setups where SL is close enough to be hit even in winning scenarios. This prevents the agent from learning to take trades in extremely volatile conditions where the outcome is essentially random.
+
+#### Trade Duration Logic
+
+| Scenario | Exit Logic |
+|----------|-----------|
+| TP hit before SL | Exit at TP price. `exit_reason = "tp_hit"`. |
+| SL hit before TP | Exit at SL price. `exit_reason = "sl_hit"`. |
+| Both on same M1 candle | Assume SL hit first (pessimistic). `exit_reason = "sl_hit"`. |
+| Neither hit after `max_hold_minutes` | Exit at current M1 close. `exit_reason = "time_exit"`. |
+| Weekend gap during trade | Exit at Friday's last M1 close. `exit_reason = "weekend_close"`. |
+
+The `max_hold_minutes = 120` (2 hours) reflects the scalping strategy's intent — these are short-duration trades. Holding for 4+ hours means the setup failed. The R-multiple for time exits is typically near zero (small loss or gain) which trains the agent that marginal setups are not worth it.
+
+#### Environment Configuration
+
+```python
+@dataclass
+class EnvConfig:
+    """Configuration for the Gym environment."""
+    
+    instrument: str = "XAU_USD"
+    pip_value: float = 0.01
+    
+    # Episode configuration
+    episode_length_days: int = 5        # 1 trading week per episode
+    max_steps_per_episode: int = 200    # Safety cap on decisions per episode
+    
+    # Trade simulation
+    max_hold_minutes: int = 120         # Force-close after 2 hours
+    risk_per_trade_pct: float = 2.0     # Matches live stream config
+    initial_equity: float = 10_000.0    # Starting equity per episode
+    max_drawdown_pct: float = 10.0      # Episode ends at circuit breaker
+    
+    # SL/TP (mirrors live strategy)
+    rr_ratio: float = 1.5              # Fixed R:R for TP calculation
+    min_sl_pips: float = 15.0          # Reject if SL < 15 pips
+    max_sl_pips: float = 100.0         # Reject if SL > 100 pips
+    
+    # Signal generation (offline rule-based)
+    bias_lookback: int = 15
+    bias_threshold: float = 0.6
+    ema_pullback_period: int = 9
+    pullback_proximity_pct: float = 0.006  # 0.6% of price
+    
+    # Feature computation
+    atr_period: int = 14
+    rsi_period: int = 14
+    bb_period: int = 20
+    bb_std: float = 2.0
+```
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **Environment class** | `app/rl/environment.py` | `ForgeTradeEnv(gymnasium.Env)` with `reset()`, `step()`, `_get_obs()`, `_simulate_trade()`, `_check_signal()`. |
+| 2 | **Trade simulator** | `app/rl/environment.py` | `simulate_trade()` function — M1-resolution SL/TP scanning. |
+| 3 | **Offline signal detector** | `app/rl/environment.py` | `_check_signal()` — runs `detect_scalp_bias()` + `evaluate_scalp_entry()` on historical data without broker calls. |
+| 4 | **Episode manager** | `app/rl/environment.py` | Handles date range selection, candle alignment across timeframes, and episode termination. |
+| 5 | **Environment config** | `app/rl/environment.py` | `EnvConfig` dataclass with defaults matching live strategy. |
+| 6 | **Tests** | `tests/test_rl_env.py` | Environment reset/step cycle, trade simulation correctness, episode termination conditions, observation space shape verification. |
+
+#### Acceptance Criteria
+
+1. `env = ForgeTradeEnv(data, config)` creates valid Gymnasium environment.
+2. `env.observation_space.shape == (27,)` and `env.action_space.n == 2`.
+3. `env.reset()` returns a valid observation and info dict.
+4. `env.step(1)` (TAKE) simulates a trade and returns correct reward.
+5. `env.step(0)` (VETO) returns hold reward and advances to next signal.
+6. Trade simulation on known data produces correct P&L (verified against manual calculation).
+7. Pessimistic fill: when M1 candle spans both SL and TP, trade is recorded as SL loss.
+8. Episode ends at `max_drawdown_pct` with `terminated=True`.
+9. Episode ends at data exhaustion with `truncated=True`.
+10. `check_env(env)` from `stable_baselines3.common.env_checker` passes.
+
+#### Dependency Changes
+
+- Add `gymnasium >= 0.29` to `requirements.txt`
+
+---
+
+### Phase 13.3 — Reward Shaping
+
+#### Purpose
+
+Define the reward function — the signal that tells the agent what "good" means. This is the **most critical design decision** in the entire system. A flawed reward function produces an agent that games the metric instead of learning genuine trade quality assessment.
+
+#### Reward Function Design
+
+The reward function has four components, carefully weighted to produce the right incentive structure:
+
+```python
+def calculate_reward(
+    action: int,                    # 0=VETO, 1=TAKE
+    trade_outcome: TradeOutcome | None,  # None if VETO
+    account_state: AccountState,
+    config: RewardConfig,
+) -> float:
+    """Calculate the shaped reward for a single step.
+    
+    Returns a scalar reward consumed by the PPO algorithm.
+    """
+```
+
+##### Component 1: Trade Outcome Reward (Core)
+
+```python
+if action == 0:  # VETO
+    # Reward for not trading — what WOULD have happened?
+    # Simulate the trade anyway (counterfactual) to judge the veto
+    if counterfactual_outcome.r_multiple < 0:
+        # Correctly vetoed a losing trade
+        reward_core = CORRECT_VETO_REWARD  # +0.3
+    else:
+        # Incorrectly vetoed a winning trade  
+        reward_core = MISSED_WINNER_PENALTY  # -0.15
+        # Note: penalty for missing winners is HALF the reward for 
+        # avoiding losers. This creates asymmetry: the agent learns
+        # that avoiding losses is more important than catching winners.
+        # This produces a conservative, capital-preserving agent.
+
+elif action == 1:  # TAKE
+    r_multiple = trade_outcome.r_multiple
+    reward_core = r_multiple  # Direct R-multiple: +1.5 for TP hit, -1.0 for SL hit
+```
+
+**Why counterfactual rewards for VETO?** Without this, the agent receives a flat reward for vetoing (e.g., +0.001) regardless of whether the veto was correct. It can never learn *which* vetoes were good. By simulating what would have happened, we give it feedback on its judgment quality.
+
+**Why asymmetric veto rewards?** In trading, a dollar saved is worth more than a dollar earned (losses compound harder than gains due to drawdown math). An agent that vetoes 30% of trades but avoids 80% of the worst losers is more valuable than one that catches every winner but also lets through every loser. The 2:1 asymmetry (0.3 for correct veto vs 0.15 penalty for missed winner) encodes this principle.
+
+##### Component 2: Hold Duration Penalty
+
+```python
+if action == 1 and trade_outcome is not None:
+    # Penalize trades that take too long — scalps should resolve quickly
+    hold_hours = trade_outcome.hold_minutes / 60.0
+    
+    if hold_hours <= 0.5:
+        # Under 30 min — no penalty (ideal scalp duration)
+        duration_penalty = 0.0
+    elif hold_hours <= 1.0:
+        # 30-60 min — mild penalty
+        duration_penalty = -0.05
+    elif hold_hours <= 2.0:
+        # 1-2 hours — moderate penalty
+        duration_penalty = -0.15
+    else:
+        # Forced time exit (>2 hours) — significant penalty
+        duration_penalty = -0.3
+```
+
+**Rationale**: Scalps that take 2+ hours to resolve are not scalps — they're positions that never moved. Even if they eventually win, the capital was locked up unproductively. The agent should learn to avoid setups that tend to stall.
+
+##### Component 3: Drawdown Contribution Cost
+
+```python
+if action == 1 and trade_outcome is not None and trade_outcome.pnl < 0:
+    # Additional cost when the loss pushes drawdown deeper
+    new_dd = account_state.drawdown_after_trade
+    old_dd = account_state.drawdown_before_trade
+    dd_increase = max(0, new_dd - old_dd)
+    
+    # Scale: losing 2% drawdown on top of existing drawdown is worse
+    # than losing 2% from equity peak
+    if old_dd > 0.05:  # Already in 5%+ drawdown
+        drawdown_penalty = -dd_increase * 3.0  # 3× amplified
+    elif old_dd > 0.03:
+        drawdown_penalty = -dd_increase * 2.0  # 2× amplified
+    else:
+        drawdown_penalty = -dd_increase * 1.0  # Normal cost
+```
+
+**Rationale**: This creates a **state-dependent risk preference**. When the account is healthy (drawdown < 3%), taking calculated risks is fine — losses are just losses. When the account is already in drawdown (> 5%), additional losses are amplified because they push toward the circuit breaker and compound recovery difficulty. The agent learns to **tighten its filter during losing periods** — exactly what a human trader should do.
+
+##### Component 4: Streak Awareness Bonus
+
+```python
+# Bonus for building winning streaks, penalty for extending losing streaks
+recent_trades = account_state.last_5_trades  # list of R-multiples
+
+if action == 1:
+    if len(recent_trades) >= 3:
+        last_3_wins = sum(1 for r in recent_trades[-3:] if r > 0)
+        
+        if last_3_wins == 3 and trade_outcome.r_multiple > 0:
+            # Extended a win streak — small bonus for consistency
+            streak_bonus = +0.1
+        elif last_3_wins == 0 and trade_outcome.r_multiple < 0:
+            # Extended a losing streak — extra penalty for not tightening up
+            streak_bonus = -0.15
+        else:
+            streak_bonus = 0.0
+    else:
+        streak_bonus = 0.0
+```
+
+**Rationale**: Losing streaks are real. Even with 66% win rate, 3 losses in a row happen ~3.7% of the time. Professional traders reduce size or pause after 3 consecutive losses. This reward component encodes that wisdom — the agent gets extra punishment for letting a 4th loss through after 3 losses.
+
+##### Combined Reward
+
+```python
+total_reward = (
+    reward_core           # [-1.0, +1.5] for TAKE; [-0.15, +0.3] for VETO
+    + duration_penalty    # [-0.3, 0.0]
+    + drawdown_penalty    # [-0.06, 0.0] typical
+    + streak_bonus        # [-0.15, +0.1]
+)
+
+# Final clipping to prevent extreme rewards from destabilizing training
+return np.clip(total_reward, -2.0, +2.0)
+```
+
+#### Reward Configuration
+
+```python
+@dataclass
+class RewardConfig:
+    """Tunable reward parameters."""
+    
+    correct_veto_reward: float = 0.3
+    missed_winner_penalty: float = -0.15
+    
+    # Duration thresholds (minutes)
+    ideal_hold_max: int = 30
+    moderate_hold_max: int = 60
+    long_hold_max: int = 120
+    
+    # Duration penalties
+    moderate_hold_penalty: float = -0.05
+    long_hold_penalty: float = -0.15
+    time_exit_penalty: float = -0.3
+    
+    # Drawdown amplification thresholds
+    dd_warning_threshold: float = 0.03  # 3%
+    dd_danger_threshold: float = 0.05   # 5%
+    dd_warning_multiplier: float = 2.0
+    dd_danger_multiplier: float = 3.0
+    
+    # Streak
+    losing_streak_extra_penalty: float = -0.15
+    winning_streak_bonus: float = 0.1
+    streak_lookback: int = 3
+    
+    # Reward clipping
+    reward_min: float = -2.0
+    reward_max: float = 2.0
+```
+
+#### Reward Distribution Analysis (Expected)
+
+Given a hypothetical agent with 66% take rate and 70% accuracy on taken trades:
+
+| Scenario | Frequency | Reward | Contribution |
+|----------|-----------|--------|-------------|
+| Correct take (TP hit, <30min) | ~35% | +1.5 | +0.525 |
+| Correct take (TP hit, 30-60min) | ~10% | +1.45 | +0.145 |
+| Incorrect take (SL hit, <30min) | ~12% | -1.0 | -0.120 |
+| Incorrect take (SL hit, 30-60min) | ~5% | -1.05 | -0.053 |
+| Time exit (near zero P&L) | ~5% | -0.30 | -0.015 |
+| Correct veto (avoided loser) | ~20% | +0.3 | +0.060 |
+| Incorrect veto (missed winner) | ~13% | -0.15 | -0.020 |
+| **Expected reward per step** | | | **≈ +0.52** |
+
+A positive expected reward per step means the agent is incentivized to be moderately selective — taking most signals but vetoing the bottom ~33% by quality.
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **Reward function** | `app/rl/rewards.py` | `calculate_reward()` with all 4 components. |
+| 2 | **Reward config** | `app/rl/rewards.py` | `RewardConfig` dataclass with tunable params. |
+| 3 | **Counterfactual simulator** | `app/rl/rewards.py` | `compute_counterfactual(entry, direction, sl, tp, m1_candles) -> TradeOutcome`. Used for scoring VETOs. |
+| 4 | **Account state tracker** | `app/rl/rewards.py` | `AccountState` class tracking equity, drawdown, trade history for reward computation. |
+| 5 | **Tests** | `tests/test_rl_rewards.py` | Correct veto scoring, duration penalties, drawdown amplification at thresholds, streak detection, reward clipping, counterfactual accuracy. |
+
+#### Acceptance Criteria
+
+1. `calculate_reward(action=1, outcome=win_1_5R, ...)` returns approximately +1.5 (core reward, no penalties).
+2. `calculate_reward(action=1, outcome=sl_hit, ...)` returns approximately -1.0 (core reward, no extras).
+3. `calculate_reward(action=0, counterfactual=loser)` returns +0.3 (correct veto).
+4. `calculate_reward(action=0, counterfactual=winner)` returns -0.15 (missed winner).
+5. Duration penalty: 90-minute trade gets -0.15 additional penalty.
+6. Drawdown amplification: losing trade during 6% drawdown gets 3× drawdown contribution penalty.
+7. Losing streak: 4th consecutive loss gets extra -0.15 penalty.
+8. Reward is always clipped to [-2.0, +2.0].
+9. Counterfactual simulation produces identical outcome to `simulate_trade()` with same inputs.
+
+---
+
+### Phase 13.4 — Neural Network Architecture
+
+#### Purpose
+
+Define the policy and value network architecture used by the PPO algorithm. The network maps the 27-feature state vector to action probabilities (policy/actor) and state value estimates (critic). The architecture must be expressive enough to capture non-linear feature interactions (e.g., "high ATR + late session + near round number = bad") while small enough to avoid overfitting on 12 months of Gold data.
+
+#### Architecture: Shared Feature Extractor + Dual Head
+
+```
+Input: ForgeState (27 features)
+         │
+         ▼
+┌─────────────────────────────────┐
+│   Shared Feature Extractor      │
+│                                 │
+│   Linear(27 → 128) + LayerNorm │
+│   + LeakyReLU(0.01)            │
+│   + Dropout(0.1)               │
+│                                 │
+│   Linear(128 → 64) + LayerNorm │
+│   + LeakyReLU(0.01)            │
+│   + Dropout(0.1)               │
+│                                 │
+│   Linear(64 → 64) + LayerNorm  │
+│   + LeakyReLU(0.01)            │
+│                                 │
+└───────────┬─────────────────────┘
+            │
+     ┌──────┴──────┐
+     ▼              ▼
+┌─────────┐   ┌─────────┐
+│  Policy  │   │  Value  │
+│  (Actor) │   │ (Critic)│
+│          │   │         │
+│ L(64→32) │   │ L(64→32)│
+│ + LReLU  │   │ + LReLU │
+│ L(32→2)  │   │ L(32→1) │
+│ + Softmax│   │         │
+│          │   │         │
+│ P(VETO)  │   │  V(s)   │
+│ P(TAKE)  │   │         │
+└─────────┘   └─────────┘
+```
+
+#### Design Decisions Explained
+
+**Why shared feature extractor?** The policy ("what to do") and value ("how good is this state") both need to understand the market state. Sharing the first 3 layers means they learn a common representation, which:
+- Reduces total parameters (fewer weights to overfit)
+- Provides implicit regularization (policy and value gradients both flow through shared layers)
+- Converges faster (shared features are trained by both losses)
+
+**Why 3 layers (128-64-64)?** 
+- Layer 1 (27→128): Expands the feature space to learn pairwise interactions. With 27 inputs, there are 351 possible pairwise interactions. 128 neurons can capture the most important ones.
+- Layer 2 (128→64): Compresses to identify the key latent factors. Most market states can be characterized by roughly 10-20 latent variables (trend strength, volatility regime, session quality, etc.). 64 is generous enough to capture these without redundancy.
+- Layer 3 (64→64): Adds representational depth for higher-order interactions (e.g., "trend strong + volatility expanding + session good" vs any two of those three). Two layers can't learn 3-way interactions; three layers can.
+- Deeper (4+ layers) would overfit on this dataset size. The generalization-depth tradeoff favors shallow but wide for RL on limited financial data.
+
+**Why LayerNorm (not BatchNorm)?**
+- BatchNorm depends on batch statistics that shift during training. In RL, the data distribution changes as the policy improves (non-stationary). LayerNorm normalizes per-sample, independent of batch, which is more stable for RL.
+
+**Why LeakyReLU (not ReLU)?**
+- ReLU can cause "dead neurons" — neurons that output zero for all inputs and never recover. With only ~50K gradient updates (typical PPO training), losing neurons is expensive. LeakyReLU with α=0.01 maintains gradient flow even for negative inputs.
+
+**Why Dropout(0.1)?**
+- Light regularization to reduce overfitting. 0.1 is conservative — only 10% of neurons dropped per forward pass during training. Too much dropout (e.g., 0.3) destabilizes PPO because the policy distribution jitters between forward passes.
+
+**Why separate policy and value heads?**
+- PPO needs both. The policy head outputs action probabilities. The value head estimates how much total future reward to expect from this state. They share features but need different final transformations — the policy must output a probability distribution (softmax), while the value is a scalar (unbounded).
+
+#### Network Size Analysis
+
+| Component | Parameters |
+|-----------|-----------|
+| Shared Layer 1: 27×128 + 128 bias + 128 LayerNorm | 3,712 |
+| Shared Layer 2: 128×64 + 64 bias + 64 LayerNorm | 8,384 |
+| Shared Layer 3: 64×64 + 64 bias + 64 LayerNorm | 4,288 |
+| Policy Layer 1: 64×32 + 32 bias | 2,080 |
+| Policy Layer 2: 32×2 + 2 bias | 66 |
+| Value Layer 1: 64×32 + 32 bias | 2,080 |
+| Value Layer 2: 32×1 + 1 bias | 33 |
+| **Total** | **~20,643 parameters** |
+
+~20K parameters is tiny by modern ML standards. This is deliberate — with ~50K-100K training samples, a model with 20K parameters has a healthy data-to-parameter ratio of ~3-5:1. A model with 1M parameters would have 0.05:1 — guaranteed overfitting.
+
+For comparison:
+- GPT-2: 1.5 billion parameters
+- A typical image classifier: 25 million parameters
+- ForgeAgent: 20K parameters
+
+Simple problems need simple models. "Should I take this trade?" is a simple (but nuanced) binary question.
+
+#### PPO Hyperparameters
+
+```python
+PPO_CONFIG = {
+    # Core PPO
+    "learning_rate": 3e-4,           # Standard for PPO. Adam optimizer.
+    "n_steps": 2048,                 # Steps per rollout buffer collection.
+                                     # With ~15 signals/day × 5 days = 75 steps/episode,
+                                     # this means ~27 episodes per rollout.
+    "batch_size": 64,                # Mini-batch size for SGD updates.
+    "n_epochs": 10,                  # PPO epochs per rollout (how many times
+                                     # we iterate over the collected data).
+    "gamma": 0.99,                   # Discount factor for future rewards.
+                                     # 0.99 means rewards 100 steps ahead are
+                                     # worth ~37% of immediate rewards.
+                                     # For trading: a good veto now contributes
+                                     # to better account state for future trades.
+    "gae_lambda": 0.95,             # GAE lambda for advantage estimation.
+                                     # 0.95 balances bias/variance in advantage
+                                     # estimation. Standard value.
+    "clip_range": 0.2,              # PPO clipping parameter. Prevents the
+                                     # policy from changing too drastically
+                                     # in one update. Standard value.
+    "ent_coef": 0.01,               # Entropy coefficient. Encourages exploration.
+                                     # 0.01 means 1% of the loss comes from
+                                     # entropy — keeps the agent from collapsing
+                                     # to always-TAKE or always-VETO too early.
+    "vf_coef": 0.5,                 # Value function coefficient in the combined
+                                     # loss. Standard.
+    "max_grad_norm": 0.5,           # Gradient clipping for stability.
+    
+    # Network
+    "policy_kwargs": {
+        "net_arch": {
+            "pi": [32],             # Policy head hidden layer(s) after shared
+            "vf": [32],             # Value head hidden layer(s) after shared
+        },
+        "share_features_extractor": True,
+        "features_extractor_kwargs": {
+            "net_arch": [128, 64, 64],
+        },
+        "activation_fn": "LeakyReLU",
+    },
+    
+    # Training
+    "total_timesteps": 500_000,     # Total agent decisions during training.
+                                     # At ~75 signals/episode (5-day episodes),
+                                     # this is ~6,667 episodes = ~133 passes
+                                     # through 1 year of data.
+    "seed": 42,                     # Reproducibility.
+}
+```
+
+#### Why These Hyperparameters
+
+| Parameter | Value | Why |
+|-----------|-------|-----|
+| `learning_rate: 3e-4` | Adam default for PPO. Too high → unstable. Too low → slow convergence. 3e-4 is the "just right" starting point validated across thousands of PPO papers. |
+| `n_steps: 2048` | Number of transitions collected before each policy update. Must be large enough to include diverse market states. 2048 ≈ 27 five-day episodes — covers multiple volatility regimes. |
+| `batch_size: 64` | Mini-batch for SGD. 64 is standard. Smaller → noisier gradients. Larger → fewer update steps per rollout. |
+| `n_epochs: 10` | How many times PPO iterates over each batch of collected data. 10 is standard. More → better sample efficiency but risks overfitting to the batch. |
+| `gamma: 0.99` | Discount factor. 0.99 is standard for episodic tasks. The agent cares about total episode reward, not just immediate. |
+| `clip_range: 0.2` | PPO's core mechanism — prevents large policy updates. 0.2 means the probability ratios are clipped to [0.8, 1.2]. Standard value from the original PPO paper. |
+| `ent_coef: 0.01` | Exploration bonus. 0.01 keeps the agent exploring (not always picking the same action) while being small enough not to overwhelm the main objective. |
+| `total_timesteps: 500K` | Conservative. PPO on simple discrete problems often converges in 100K-200K. 500K provides margin. Training can be stopped early if validation performance plateaus. |
+
+#### Custom Feature Extractor (Stable Baselines3 Integration)
+
+Stable Baselines3 supports custom feature extractors via subclassing:
+
+```python
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
+
+class ForgeFeatureExtractor(BaseFeaturesExtractor):
+    """Custom 3-layer shared feature extractor for ForgeAgent.
+    
+    Replaces SB3's default MLP extractor with our LayerNorm + 
+    LeakyReLU + Dropout architecture.
+    """
+    
+    def __init__(self, observation_space, features_dim=64):
+        super().__init__(observation_space, features_dim)
+        
+        self.net = nn.Sequential(
+            nn.Linear(27, 128),
+            nn.LayerNorm(128),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(0.1),
+            
+            nn.Linear(128, 64),
+            nn.LayerNorm(64),
+            nn.LeakyReLU(0.01),
+            nn.Dropout(0.1),
+            
+            nn.Linear(64, 64),
+            nn.LayerNorm(64),
+            nn.LeakyReLU(0.01),
+        )
+    
+    def forward(self, observations):
+        return self.net(observations)
+```
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **Feature extractor** | `app/rl/network.py` | `ForgeFeatureExtractor(BaseFeaturesExtractor)` — 3-layer shared encoder. |
+| 2 | **PPO config** | `app/rl/network.py` | `PPO_CONFIG` dict with all hyperparameters. `build_agent(env) -> PPO` factory function. |
+| 3 | **Tests** | `tests/test_rl_network.py` | Feature extractor forward pass shape test, parameter count verification, gradient flow test (no dead neurons). |
+
+#### Acceptance Criteria
+
+1. `ForgeFeatureExtractor` accepts `(batch, 27)` input and produces `(batch, 64)` output.
+2. Total parameter count is within 10% of 20,643.
+3. Forward pass through the full network (extractor → policy head) produces valid probability distribution (sums to 1.0).
+4. Forward pass through the full network (extractor → value head) produces single scalar.
+5. No NaN gradients after 100 random forward-backward passes.
+6. `build_agent(env)` returns a valid `PPO` instance that can call `.predict()` and `.learn()`.
+
+#### Dependency Changes
+
+- Add `stable-baselines3 >= 2.0` to `requirements.txt` (PPO implementation + SB3 utilities)
+- Add `torch >= 2.0` to `requirements.txt` (neural network backend — installed automatically with SB3)
+- Add `tensorboard >= 2.14` to `requirements.txt` (training metrics logging)
+
+---
+
+### Phase 13.5 — Training Pipeline
+
+#### Purpose
+
+Orchestrate the full training loop: load data → create environments → train agent → save checkpoints → log metrics. This is the glue connecting Phases 13.0–13.4 into a runnable training workflow.
+
+#### Training Flow
+
+```
+python -m app.rl.train --instrument XAU_USD --config rl_config.json
+
+1. Load historical data from data/historical/XAU_USD/
+   ├── Load M1, M5, M15, H1 parquet files
+   ├── Apply chronological split (70% train, 15% val, 15% test)
+   └── Validate data quality (no gaps, correct date ranges)
+
+2. Create training environment
+   ├── ForgeTradeEnv(train_data, env_config)
+   ├── Wrap with gymnasium wrappers:
+   │   ├── NormalizeReward (stabilizes reward scale during training)
+   │   ├── TimeLimit (max_steps per episode)
+   │   └── Monitor (logs episode stats)
+   └── Optionally: SubprocVecEnv with N=4 parallel environments
+       (4× faster training by collecting 4 episodes simultaneously)
+
+3. Create validation environment
+   ├── ForgeTradeEnv(val_data, env_config)
+   └── NOT wrapped with NormalizeReward (raw rewards for evaluation)
+
+4. Build PPO agent
+   ├── PPO("MlpPolicy", env, **PPO_CONFIG)
+   ├── Custom ForgeFeatureExtractor
+   └── Set seed for reproducibility
+
+5. Training loop (with early stopping)
+   ├── For each training iteration (every n_steps):
+   │   ├── Collect 2048 transitions from training env
+   │   ├── Perform 10 epochs of PPO updates
+   │   ├── Log to TensorBoard:
+   │   │   ├── policy_loss, value_loss, entropy
+   │   │   ├── mean_reward, episode_length
+   │   │   ├── explained_variance
+   │   │   └── custom: take_rate, win_rate, avg_r_multiple
+   │   │
+   │   ├── Every 10 iterations: evaluate on validation env
+   │   │   ├── Run 20 episodes on validation data
+   │   │   ├── Calculate validation metrics:
+   │   │   │   ├── mean_reward, median_reward
+   │   │   │   ├── win_rate (of taken trades)
+   │   │   │   ├── take_rate (% of signals taken)
+   │   │   │   ├── profit_factor
+   │   │   │   ├── max_drawdown
+   │   │   │   └── sharpe_ratio (on episode returns)
+   │   │   ├── Save if best validation reward so far
+   │   │   └── Early stopping: if validation reward hasn't improved
+   │   │       for 50 iterations → stop training
+   │   │
+   │   └── Save checkpoint every 50 iterations:
+   │       └── models/forge_agent/checkpoint_{iteration}.zip
+   │
+   └── Final save: models/forge_agent/best_model.zip
+
+6. Post-training report
+   ├── Print training summary:
+   │   ├── Total timesteps trained
+   │   ├── Best validation reward and iteration
+   │   ├── Training time
+   │   └── Final take rate and win rate
+   └── Save report to models/forge_agent/training_report.json
+```
+
+#### Parallel Training Environments
+
+Training with a single environment is slow because PPO must wait for each episode to complete before updating. Using `SubprocVecEnv` with 4 parallel environments means 4 episodes run simultaneously in separate processes:
+
+```python
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
+def make_env(data, config, seed):
+    def _init():
+        env = ForgeTradeEnv(data, config)
+        env.reset(seed=seed)
+        return env
+    return _init
+
+# 4 parallel environments with different random seeds
+vec_env = SubprocVecEnv([
+    make_env(train_data, env_config, seed=42 + i) 
+    for i in range(4)
+])
+```
+
+Each environment selects different random date ranges for episodes, so the agent sees diverse market conditions simultaneously. This doesn't change the algorithm — it just provides 4× more data per collection cycle.
+
+#### Noise Injection (Anti-Overfitting)
+
+During training, apply small random perturbations to the state vector to prevent the agent from memorizing specific numerical patterns:
+
+```python
+class NoisyObservationWrapper(gymnasium.ObservationWrapper):
+    """Adds Gaussian noise to observations during training.
+    
+    Prevents the agent from memorizing exact feature values.
+    At test time, noise is disabled.
+    """
+    
+    def __init__(self, env, noise_std=0.02):
+        super().__init__(env)
+        self.noise_std = noise_std
+    
+    def observation(self, obs):
+        if self.training:
+            noise = np.random.normal(0, self.noise_std, size=obs.shape)
+            return (obs + noise).astype(np.float32)
+        return obs
+```
+
+`noise_std=0.02` means each feature is perturbed by ±2% of its standard deviation. This is enough to break memorization while preserving the signal.
+
+#### TensorBoard Logging
+
+Custom metrics logged each iteration:
+
+```python
+class ForgeTrainingCallback(BaseCallback):
+    """Logs trading-specific metrics to TensorBoard."""
+    
+    def _on_step(self):
+        # Extract from info dicts
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            if "trade_result" in info:
+                self.logger.record("forge/take_rate", info["take_rate"])
+                self.logger.record("forge/win_rate", info["win_rate"])
+                self.logger.record("forge/avg_r_multiple", info["avg_r"])
+                self.logger.record("forge/max_drawdown", info["max_dd"])
+                self.logger.record("forge/profit_factor", info["pf"])
+        return True
+```
+
+#### Directory Structure
+
+```
+models/
+  forge_agent/
+    best_model.zip           # Best validation model (deployed to live)
+    final_model.zip          # Model at end of training
+    checkpoint_050.zip       # Periodic checkpoints
+    checkpoint_100.zip
+    ...
+    training_report.json     # Performance summary
+    config.json              # EnvConfig + RewardConfig + PPO_CONFIG used
+    tensorboard/
+      events.out.tfevents.*  # TensorBoard logs
+```
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **Training script** | `app/rl/train.py` | CLI entry point. Loads data, creates envs, builds agent, runs training loop with validation and early stopping. |
+| 2 | **Evaluation function** | `app/rl/evaluate.py` | `evaluate_agent(model, val_env, n_episodes=20) -> dict`. Runs episodes, computes win_rate, take_rate, profit_factor, sharpe, max_dd. |
+| 3 | **Training callback** | `app/rl/train.py` | `ForgeTrainingCallback(BaseCallback)` — logs custom metrics. |
+| 4 | **Noise wrapper** | `app/rl/environment.py` | `NoisyObservationWrapper` for training-time noise injection. |
+| 5 | **Config serialization** | `app/rl/train.py` | Save all configs (env, reward, PPO) to `config.json` alongside model for reproducibility. |
+| 6 | **Tests** | `tests/test_rl_train.py` | Training runs for 100 timesteps without error. Model saves and loads correctly. Evaluation produces valid metrics dict. |
+
+#### Acceptance Criteria
+
+1. `python -m app.rl.train --instrument XAU_USD --timesteps 1000` completes without errors (quick smoke test).
+2. Model saves to `models/forge_agent/best_model.zip` in SB3 format.
+3. Saved model loads and produces valid predictions: `model.predict(obs)` returns action in {0, 1}.
+4. TensorBoard logs are generated and viewable (`tensorboard --logdir models/forge_agent/tensorboard/`).
+5. Validation evaluation runs 20 episodes and returns dict with all expected metrics.
+6. Early stopping fires when validation reward stagnates (testable with a mocked non-improving env).
+7. Training report JSON includes all key metrics and the config used.
+8. `SubprocVecEnv` with 4 environments runs without deadlocks or crashes.
+9. Noise wrapper adds noise during training but not during evaluation.
+
+#### Dependency Changes
+
+None beyond Phase 13.4 (SB3 and PyTorch already added).
+
+---
+
+### Phase 13.6 — Evaluation & Walk-Forward Validation
+
+#### Purpose
+
+Rigorously test the trained agent on unseen data using multiple evaluation protocols. The agent must pass quantitative thresholds before it's allowed anywhere near live trading. This phase is the **quality gate** — it separates a genuinely useful model from an overfitted artifact.
+
+#### Evaluation Protocols
+
+##### Protocol 1: Holdout Test Set
+
+Run the agent on the 15% holdout test data (last ~7 weeks of the 12-month dataset). This data was never seen during training or validation.
+
+```
+Test metrics (MUST PASS ALL):
+  ├── Win rate of taken trades ≥ 60%
+  ├── Take rate (signals taken vs total) between 40% and 85%
+  │   (too low = vetoing everything, too high = not filtering)
+  ├── Profit factor ≥ 1.3 (gross profit / gross loss)
+  ├── Max drawdown < 8%
+  ├── Average R-multiple of taken trades > 0.0 (net positive)
+  └── Sharpe ratio > 0.5 (annualized, if applicable to the period)
+```
+
+**Why these thresholds?** They're deliberately achievable but meaningful:
+- 60% win rate: The unfiltered strategy runs ~55-60%. The RL filter should improve this by vetoing weak setups. 60% is the minimum improvement to justify the complexity.
+- 40-85% take rate: An agent that takes <40% of signals is too conservative — it's locked out of too many valid trades. An agent that takes >85% isn't filtering meaningfully.
+- Profit factor 1.3: For every $1 lost, the agent makes $1.30. Sustainable edge.
+- Max DD <8%: Below the 10% circuit breaker. The agent should never push near the breaker on test data.
+
+##### Protocol 2: Walk-Forward Validation
+
+The gold standard for time-series models. Instead of one train/test split, perform multiple overlapping splits:
+
+```
+Split 1: Train on months 1-6,  validate on month 7
+Split 2: Train on months 2-7,  validate on month 8
+Split 3: Train on months 3-8,  validate on month 9
+Split 4: Train on months 4-9,  validate on month 10
+Split 5: Train on months 5-10, validate on month 11
+Split 6: Train on months 6-11, validate on month 12
+```
+
+6 splits, each with 6 months of training and 1 month of out-of-sample testing. The agent must pass the threshold criteria on **at least 4 of 6 splits** (67% consistency). This tests whether the learned patterns generalize across different market regimes.
+
+```
+Walk-forward criteria:
+  ├── Pass holdout thresholds on ≥ 4/6 splits
+  ├── No split has max drawdown > 12%
+  ├── Average win rate across all splits ≥ 58%
+  └── Variance of win rate across splits < 15% (consistency)
+```
+
+**Interpretation**: If the agent passes on only 2-3 splits, it probably learned regime-specific patterns that don't generalize. If it passes on 5-6, it's robust.
+
+##### Protocol 3: Regime-Specific Testing
+
+Manually tag historical periods by regime and test each:
+
+```
+Regime tagging:
+  ├── Trending up    (Gold rallying for 2+ weeks, ADX > 30)
+  ├── Trending down  (Gold falling for 2+ weeks, ADX > 30)
+  ├── Ranging        (ADX < 20 for 2+ weeks)
+  ├── High volatility (ATR > 1.5× 60-day average)
+  └── Low volatility  (ATR < 0.5× 60-day average)
+
+Expected behavior:
+  ├── Trending: high take rate (>70%), good win rate (65%+)
+  ├── Ranging: low take rate (<50%), moderate win rate (55%+)
+  ├── High vol: moderate take rate (50-65%), win rate varies
+  └── Low vol: very low take rate (<40%) — agent should sit out
+```
+
+**This doesn't have hard pass/fail thresholds** — it's diagnostic. If the agent takes 80% of signals during ranging markets (when the scalp strategy doesn't work well), that's concerning even if overall metrics are fine. This analysis guides manual review.
+
+##### Protocol 4: Comparison vs. Unfiltered Strategy
+
+Run the same test data through:
+- **Baseline**: All signals taken (no RL filter)
+- **Filtered**: Signals filtered by ForgeAgent
+
+```
+Comparison metrics:
+  ├── Win rate: filtered ≥ baseline + 5%
+  ├── Profit factor: filtered ≥ baseline × 1.15
+  ├── Total P&L: filtered ≥ baseline (or within 5% — the filter
+  │   may slightly reduce total profit by missing some winners,
+  │   but should SIGNIFICANTLY reduce drawdown)
+  └── Max drawdown: filtered ≤ baseline × 0.75 (25% less drawdown)
+```
+
+The most important comparison is **max drawdown reduction**. The RL filter's primary value is capital preservation — avoiding the -$3,124 trades. Even if total profit is similar, reducing drawdown by 25% is transformative for real-money trading psychology and compounding.
+
+#### Evaluation Report
+
+```json
+{
+  "model_path": "models/forge_agent/best_model.zip",
+  "evaluation_date": "2026-03-15T10:00:00Z",
+  "training_config": { "...": "..." },
+  
+  "holdout_test": {
+    "win_rate": 0.67,
+    "take_rate": 0.63,
+    "profit_factor": 1.52,
+    "max_drawdown": 0.054,
+    "avg_r_multiple": 0.31,
+    "sharpe_ratio": 0.82,
+    "total_trades_taken": 94,
+    "total_signals_seen": 149,
+    "passed": true
+  },
+  
+  "walk_forward": {
+    "splits": [
+      {"months": "1-6 → 7",  "win_rate": 0.65, "profit_factor": 1.45, "passed": true},
+      {"months": "2-7 → 8",  "win_rate": 0.63, "profit_factor": 1.38, "passed": true},
+      {"months": "3-8 → 9",  "win_rate": 0.58, "profit_factor": 1.18, "passed": false},
+      {"months": "4-9 → 10", "win_rate": 0.69, "profit_factor": 1.62, "passed": true},
+      {"months": "5-10 → 11","win_rate": 0.66, "profit_factor": 1.48, "passed": true},
+      {"months": "6-11 → 12","win_rate": 0.64, "profit_factor": 1.41, "passed": true}
+    ],
+    "splits_passed": 5,
+    "splits_required": 4,
+    "passed": true
+  },
+  
+  "regime_analysis": {
+    "trending_up":    {"take_rate": 0.72, "win_rate": 0.68},
+    "trending_down":  {"take_rate": 0.70, "win_rate": 0.65},
+    "ranging":        {"take_rate": 0.45, "win_rate": 0.57},
+    "high_volatility":{"take_rate": 0.58, "win_rate": 0.62},
+    "low_volatility": {"take_rate": 0.35, "win_rate": 0.54}
+  },
+  
+  "vs_baseline": {
+    "baseline_win_rate": 0.58,
+    "filtered_win_rate": 0.67,
+    "baseline_profit_factor": 1.21,
+    "filtered_profit_factor": 1.52,
+    "baseline_max_drawdown": 0.089,
+    "filtered_max_drawdown": 0.054,
+    "drawdown_reduction": 0.39,
+    "total_pnl_change": "+12%"
+  },
+  
+  "verdict": "PASS — deploy to shadow mode"
+}
+```
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **Evaluation runner** | `app/rl/evaluate.py` | Expands the basic evaluator from 13.5 with all 4 protocols. |
+| 2 | **Walk-forward splitter** | `app/rl/evaluate.py` | `walk_forward_splits(data, train_months=6, test_months=1, step_months=1)` — generates the overlapping train/test splits. |
+| 3 | **Walk-forward trainer** | `app/rl/evaluate.py` | For each split, trains a fresh agent and evaluates. Aggregates results. |
+| 4 | **Regime tagger** | `app/rl/evaluate.py` | `tag_regime(h1_candles) -> str` — uses ADX and ATR trends to classify periods. |
+| 5 | **Baseline comparator** | `app/rl/evaluate.py` | Runs unfiltered strategy on same data, computes delta metrics. |
+| 6 | **Report generator** | `app/rl/evaluate.py` | Produces JSON + human-readable summary. |
+| 7 | **CLI command** | `app/rl/evaluate.py` | `python -m app.rl.evaluate --model models/forge_agent/best_model.zip --data data/historical/XAU_USD/` |
+| 8 | **Tests** | `tests/test_rl_eval.py` | Walk-forward split correctness, regime tagging on synthetic data, report schema validation. |
+
+#### Acceptance Criteria
+
+1. Holdout test runs on 15% of data and produces all 6 metrics.
+2. Walk-forward generates exactly 6 splits from 12 months of data.
+3. Walk-forward trains and evaluates independently for each split (no data leakage between splits).
+4. Regime tagger produces labels for all common Gold market conditions.
+5. Baseline comparison uses identical data and SL/TP logic as filtered evaluation.
+6. Report JSON is generated and validates against schema.
+7. Agent must pass holdout and walk-forward criteria to proceed to Phase 13.7.
+8. If agent fails criteria, the report clearly identifies which thresholds were missed and in which regimes/splits.
+
+---
+
+### Phase 13.7 — Live Integration (Shadow Mode → Active)
+
+#### Purpose
+
+Wire the trained ForgeAgent model into the live trading engine as a trade filter. Deployment follows a graduated rollout: first **shadow mode** (logs decisions but doesn't veto), then **active mode** (actually vetoes trades below confidence threshold).
+
+#### Shadow Mode
+
+The agent runs alongside every trade decision but has no power to block trades. It logs what it *would* have done. After 2-4 weeks of shadow data, compare:
+
+```
+Shadow mode logging:
+  ├── For each signal from TrendScalpStrategy:
+  │   ├── Build state vector (same as training)
+  │   ├── Agent predicts: action, confidence
+  │   ├── Log: {timestamp, signal, state_hash, action, confidence, actual_outcome}
+  │   └── Trade executes regardless of agent opinion
+  │
+  └── After 2+ weeks, analyze:
+      ├── If agent vetoed and trade lost → "correct veto" count
+      ├── If agent vetoed and trade won → "missed winner" count
+      ├── If agent took and trade won → "correct take" count
+      ├── If agent took and trade lost → "incorrect take" count
+      └── Calculate: theoretical improvement if agent was active
+```
+
+**Activation criteria**: Agent's theoretical performance must show:
+- Correct veto rate ≥ 60% (of the trades it vetoed, 60%+ were losers)
+- Improvement in win rate ≥ +3% vs unfiltered
+- Improvement in profit factor ≥ +10% vs unfiltered
+- No trade it vetoed was a >2R winner more than 10% of the time (not missing big moves)
+
+#### Active Mode Integration
+
+```python
+# In engine.py, within the tick() method:
+
+# After strategy produces a signal:
+result = await self._strategy.evaluate(self._broker, eng_config)
+
+if result is not None and self._rl_filter is not None:
+    # Build state vector from current market data
+    state = self._state_builder.build(
+        m5_candles=...,
+        m1_candles=...,
+        h1_candles=...,
+        m15_candles=...,
+        account_state=self._get_account_state(),
+    )
+    
+    # Agent decides
+    action, confidence = self._rl_filter.assess(state)
+    
+    if action == 0:  # VETO
+        logger.info(
+            "ForgeAgent VETOED %s %s signal (confidence=%.2f)",
+            result.signal.direction,
+            self.instrument,
+            confidence,
+        )
+        # Update dashboard insight
+        update_strategy_insight(
+            self.stream_name,
+            {"rl_filter": "vetoed", "confidence": round(confidence, 3)},
+        )
+        result = None  # Suppress the trade
+    else:
+        logger.info(
+            "ForgeAgent APPROVED %s %s signal (confidence=%.2f)",
+            result.signal.direction,
+            self.instrument,
+            confidence,
+        )
+        update_strategy_insight(
+            self.stream_name,
+            {"rl_filter": "approved", "confidence": round(confidence, 3)},
+        )
+```
+
+#### RLFilter Class
+
+```python
+class RLTradeFilter:
+    """Wraps a trained PPO model for live trade filtering.
+    
+    Loads a saved SB3 model and exposes a simple assess() interface.
+    Thread-safe (PyTorch inference is safe for concurrent reads).
+    Stateless per-call — no side effects.
+    """
+    
+    def __init__(self, model_path: str, confidence_threshold: float = 0.6):
+        self.model = PPO.load(model_path)
+        self.threshold = confidence_threshold
+    
+    def assess(self, state: np.ndarray) -> tuple[int, float]:
+        """Assess a trade signal.
+        
+        Args:
+            state: ForgeState as numpy array, shape (27,).
+        
+        Returns:
+            (action, confidence) where:
+            - action: 0 (VETO) or 1 (TAKE)
+            - confidence: probability assigned to the chosen action [0.5, 1.0]
+        """
+        action, _states = self.model.predict(state, deterministic=True)
+        
+        # Extract action probabilities for confidence
+        obs_tensor = torch.as_tensor(state).float().unsqueeze(0)
+        with torch.no_grad():
+            dist = self.model.policy.get_distribution(obs_tensor)
+            probs = dist.distribution.probs.numpy()[0]
+        
+        confidence = float(probs[action])
+        return int(action), confidence
+```
+
+#### Dashboard Integration
+
+The dashboard shows the RL filter's status in the strategy insight panel:
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  MICRO-SCALP (XAU_USD)                                  │
+│                                                         │
+│  Strategy: Momentum Scalp                               │
+│  Bias: ● BULLISH (M1)                                  │
+│                                                         │
+│  ForgeAgent: ● ACTIVE                                   │
+│  ├── Last signal: APPROVED (conf: 0.83)                 │
+│  ├── Session stats: 8 taken / 3 vetoed (73% take rate)  │
+│  ├── Veto accuracy: 2/3 correct (67%)                   │
+│  └── Model: best_model.zip (trained 2026-03-15)         │
+│                                                         │
+│  Checks:                                                │
+│  ✓ Bias detected  ✓ Volatility OK  ✓ Pullback to EMA   │
+│  ✓ Spread OK      ✓ Confirmation   ✓ SL valid           │
+│  ✓ RL filter passed                                     │
+└─────────────────────────────────────────────────────────┘
+```
+
+When the agent vetoes:
+
+```
+│  ForgeAgent: ● ACTIVE                                   │
+│  ├── Last signal: VETOED (conf: 0.71)                   │
+│  ├── Reason: Low confidence — late session + high spread │
+│  ...                                                    │
+│  ✓ Bias detected  ✓ Volatility OK  ✓ Pullback to EMA   │
+│  ✓ Spread OK      ✓ Confirmation   ✓ SL valid           │
+│  ✗ RL filter vetoed                                     │
+```
+
+#### Configuration
+
+```json
+// In forge.json, micro-scalp stream:
+{
+  "name": "micro-scalp",
+  "instrument": "XAU_USD",
+  "strategy": "trend_scalp",
+  "rl_filter": {
+    "enabled": true,
+    "mode": "shadow",           // "shadow" | "active" | "disabled"
+    "model_path": "models/forge_agent/best_model.zip",
+    "confidence_threshold": 0.6,
+    "log_decisions": true
+  }
+}
+```
+
+Mode transitions:
+- `"disabled"` → no RL filter, strategy operates as before (default)
+- `"shadow"` → RL filter logs but doesn't veto (data collection mode)
+- `"active"` → RL filter vetoes trades below confidence threshold
+
+#### Model Retraining Cadence
+
+The model should be retrained periodically as market conditions evolve:
+
+| Cadence | What | Why |
+|---------|------|-----|
+| **Monthly** | Download last month's new data, append to training set, retrain | Market microstructure drifts. Session patterns shift with DST changes. New psychological levels form. |
+| **After regime change** | If Gold moves to a new $500 range (e.g., $5000→$5500), retrain immediately | Round number features shift. ATR scales may change. |
+| **After poor performance** | If live win rate drops below 55% for 2+ weeks, retrain with recent data weighted higher | Model may have degraded due to distribution shift. |
+
+Retraining uses the same pipeline from Phase 13.5, just with updated data. The old model is kept as fallback.
+
+#### Implementation Items
+
+| # | Item | File(s) | Description |
+|---|------|---------|-------------|
+| 1 | **RL filter class** | `app/rl/filter.py` | `RLTradeFilter` — loads model, exposes `assess()`. |
+| 2 | **State builder integration** | `app/rl/features.py` | `ForgeStateBuilder.build_live()` — builds state from live broker data (handles async candle fetches). |
+| 3 | **Engine integration** | `app/engine.py` | Add `_rl_filter` optional param to `TradingEngine`. Insert filter check after strategy evaluation, before order placement. |
+| 4 | **Shadow mode logging** | `app/rl/filter.py` | `ShadowLogger` — records all decisions with timestamps and actual outcomes for later analysis. Writes to `data/rl_shadow_log.jsonl`. |
+| 5 | **Dashboard updates** | `app/static/index.html`, `app/api/routers.py` | Add RL filter status to insight panel. New API field in `/status`. |
+| 6 | **forge.json config** | `app/config.py`, `app/models/stream_config.py` | Parse `rl_filter` config from stream definition. |
+| 7 | **Shadow analysis script** | `app/rl/analyze_shadow.py` | `python -m app.rl.analyze_shadow --log data/rl_shadow_log.jsonl` — analyzes shadow mode performance and outputs activation recommendation. |
+| 8 | **Tests** | `tests/test_rl_filter.py` | Filter loads model and produces valid action/confidence. Shadow logger writes correct format. Engine correctly vetoes when filter returns 0. Engine proceeds when filter returns 1. Engine proceeds when no filter is configured (backward compat). |
+
+#### Acceptance Criteria
+
+1. `RLTradeFilter("models/forge_agent/best_model.zip")` loads without errors.
+2. `filter.assess(state)` returns `(action, confidence)` where action ∈ {0, 1} and confidence ∈ [0.5, 1.0].
+3. Inference latency < 10ms per call (must not slow the trading loop).
+4. Shadow mode: all signals are logged to JSONL with correct schema. No trades are vetoed.
+5. Active mode: signals with confidence below threshold are vetoed. Vetoed signals logged but not executed.
+6. Engine with `rl_filter=None` (disabled) behaves identically to pre-Phase-13 engine (backward compatibility).
+7. Dashboard displays ForgeAgent status, confidence, and session statistics.
+8. `forge.json` rl_filter config is parsed and respected for each stream independently.
+9. Shadow analysis script produces activation recommendation based on configurable thresholds.
+
+---
+
+### Phase 13 — Dependency & Build Summary
+
+#### Full Dependency Graph
+
+```
+Phase 13.0 (Data Collection)
+     │
+     ├──── Phase 13.1 (Feature Engineering)
+     │         │
+     │         ├──── Phase 13.2 (Gym Environment)
+     │         │         │
+     │         │         ├──── Phase 13.3 (Reward Shaping)
+     │         │         │         │
+     │         │         │         └──── Phase 13.4 (Neural Network)
+     │         │         │                    │
+     │         │         └────────────────────┤
+     │         │                              │
+     │         └──────────────────────────────┤
+     │                                        │
+     └────────────────────────────────────────┤
+                                              ▼
+                                   Phase 13.5 (Training Pipeline)
+                                              │
+                                              ▼
+                                   Phase 13.6 (Evaluation & Validation)
+                                              │
+                                              ▼
+                                   Phase 13.7 (Live Integration)
+```
+
+#### New Files Created
+
+| File | Sub-Phase | Purpose |
+|------|-----------|---------|
+| `app/rl/__init__.py` | 13.0 | Package init |
+| `app/rl/data_collector.py` | 13.0 | Historical data download + clean + store |
+| `app/rl/features.py` | 13.1 | ForgeState, ForgeStateBuilder, normalization utils |
+| `app/rl/environment.py` | 13.2 | ForgeTradeEnv (Gymnasium), trade simulator, noise wrapper |
+| `app/rl/rewards.py` | 13.3 | Reward function, RewardConfig, AccountState, counterfactual |
+| `app/rl/network.py` | 13.4 | ForgeFeatureExtractor, PPO_CONFIG, build_agent() |
+| `app/rl/train.py` | 13.5 | Training script, callbacks, CLI entry |
+| `app/rl/evaluate.py` | 13.6 | All 4 evaluation protocols, walk-forward, regime, report |
+| `app/rl/filter.py` | 13.7 | RLTradeFilter, ShadowLogger |
+| `app/rl/analyze_shadow.py` | 13.7 | Shadow mode performance analysis |
+| `tests/test_rl_data.py` | 13.0 | Data collection tests |
+| `tests/test_rl_features.py` | 13.1 | Feature engineering tests |
+| `tests/test_rl_env.py` | 13.2 | Environment tests |
+| `tests/test_rl_rewards.py` | 13.3 | Reward function tests |
+| `tests/test_rl_network.py` | 13.4 | Network architecture tests |
+| `tests/test_rl_train.py` | 13.5 | Training pipeline tests |
+| `tests/test_rl_eval.py` | 13.6 | Evaluation tests |
+| `tests/test_rl_filter.py` | 13.7 | Live filter tests |
+
+#### New Dependencies
+
+| Package | Version | Sub-Phase | Purpose |
+|---------|---------|-----------|---------|
+| `pandas` | >= 2.0 | 13.0 | Data manipulation |
+| `pyarrow` | >= 14.0 | 13.0 | Parquet file I/O |
+| `gymnasium` | >= 0.29 | 13.2 | RL environment framework |
+| `stable-baselines3` | >= 2.0 | 13.4 | PPO implementation |
+| `torch` | >= 2.0 | 13.4 | Neural network backend (auto-installed with SB3) |
+| `tensorboard` | >= 2.14 | 13.5 | Training metrics visualization |
+
+#### Estimated Effort per Sub-Phase
+
+| Sub-Phase | Effort | Risk | Key Challenge |
+|-----------|--------|------|---------------|
+| 13.0 Data Collection | 3-4 hours | Low | OANDA pagination edge cases |
+| 13.1 Feature Engineering | 4-5 hours | Medium | Getting normalization right for all 27 features |
+| 13.2 Gym Environment | 6-8 hours | High | M1-resolution trade simulation correctness |
+| 13.3 Reward Shaping | 4-6 hours | **Highest** | Reward design determines training success |
+| 13.4 Neural Network | 2-3 hours | Low | Mostly configuration of proven architecture |
+| 13.5 Training Pipeline | 4-5 hours | Medium | Parallel envs + TensorBoard + early stopping |
+| 13.6 Evaluation | 5-7 hours | Medium | Walk-forward requires multiple full training runs |
+| 13.7 Live Integration | 3-4 hours | Low | Engine wiring + dashboard updates |
+| **Total** | **31-42 hours** | | |
+
+#### Risk Register
+
+| Risk | Likelihood | Impact | Mitigation |
+|------|-----------|--------|------------|
+| **Insufficient data** — 12 months may not cover enough regime diversity | Medium | High | Extend to 18-24 months if OANDA allows. Alternatively, augment with synthetic data (time-shifted replays). |
+| **Overfitting** — agent memorizes training data | High | Critical | Walk-forward validation (13.6), noise injection (13.5), small network (13.4), regime testing. |
+| **Reward hacking** — agent games reward function | Medium | High | Counterfactual veto scoring prevents "always veto" exploit. Take rate bounds ensure agent isn't degenerate. |
+| **Distribution shift** — live market differs from training data | High | Medium | Monthly retraining with new data. Shadow mode catches degradation before live impact. Fallback to disabled mode. |
+| **Inference latency** — model prediction slows trading loop | Low | Low | 20K param model runs in <1ms. Even with state building overhead, <10ms total is easy. |
+| **Dependency bloat** — PyTorch + SB3 are large packages | Certain | Low | Acceptable — these are standard ML libraries. ~2GB disk, ~500MB RAM during training. Inference RAM is minimal. |
+
+---
+
+*Phase 13 was designed to transform ForgeTrade's gold scalping from a rigid rule-based system into an adaptive, learning-augmented trading agent. ForgeAgent sits on top of the proven momentum-bias strategy, adding a quality filter that no amount of hand-coded rules could replicate. The phased rollout (shadow → active) ensures zero risk to live capital during development and validation.*
+
+---
+
 *This plan was generated by the Forge Director. Each phase should be built, tested, and authorized sequentially before proceeding to the next.*

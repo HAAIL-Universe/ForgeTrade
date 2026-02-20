@@ -295,33 +295,33 @@ class TestCandlestickPatterns:
 class TestScalpSLTP:
     def test_scalp_sl_swing_low_buy(self):
         """SL placed at recent swing low for buy."""
-        # V-shape: entry 2050.50, swing low at 2050.10 → distance 0.40 = 40 pips
+        # V-shape: entry 2052.50, swing low at 2050.00 → distance 2.50 = 250 pips
         prices = [
-            (2050.50, 2050.60, 2050.40, 2050.50),  # 0
-            (2050.45, 2050.55, 2050.30, 2050.35),  # 1
-            (2050.35, 2050.40, 2050.20, 2050.25),  # 2
-            (2050.25, 2050.30, 2050.15, 2050.18),  # 3
-            (2050.18, 2050.22, 2050.12, 2050.14),  # 4
-            (2050.14, 2050.20, 2050.10, 2050.12),  # 5 — swing low (low=2050.10)
-            (2050.15, 2050.30, 2050.12, 2050.28),  # 6 — recovering
-            (2050.28, 2050.40, 2050.25, 2050.38),  # 7
-            (2050.38, 2050.50, 2050.35, 2050.48),  # 8
-            (2050.48, 2050.58, 2050.45, 2050.55),  # 9
+            (2052.50, 2052.60, 2052.40, 2052.50),  # 0
+            (2052.00, 2052.10, 2051.50, 2051.60),  # 1
+            (2051.50, 2051.60, 2051.00, 2051.10),  # 2
+            (2051.00, 2051.10, 2050.50, 2050.60),  # 3
+            (2050.50, 2050.60, 2050.10, 2050.20),  # 4
+            (2050.10, 2050.30, 2050.00, 2050.15),  # 5 — swing low (low=2050.00)
+            (2050.20, 2050.80, 2050.15, 2050.70),  # 6 — recovering
+            (2050.70, 2051.50, 2050.60, 2051.40),  # 7
+            (2051.40, 2052.20, 2051.30, 2052.10),  # 8
+            (2052.10, 2052.60, 2052.00, 2052.50),  # 9
         ]
         candles = _make_candles(prices)
-        # entry=2050.55, swing low=2050.10 → ~45 pips distance → within 15-100
+        # entry=2052.50, swing low=2050.00 → SL ~2049.70 (30-pip buffer) → ~280 pips → within 200-800
         sl = calculate_scalp_sl(
-            entry_price=2050.55,
+            entry_price=2052.50,
             direction="buy",
             candles_m1=candles,
             pip_value=0.01,
         )
         assert sl is not None
-        assert sl < 2050.55  # SL is below entry
-        assert sl <= 2050.10  # SL at or below swing low
+        assert sl < 2052.50  # SL is below entry
+        assert sl <= 2050.00  # SL at or below swing low
 
     def test_scalp_sl_min_bound(self):
-        """Trade skipped when SL is too tight (< 15 pips)."""
+        """Trade skipped when SL is too tight (< 200 pips / $2.00)."""
         # Create candles where swing low is very close to entry
         prices = [(2050, 2050.2, 2050.0, 2050.1)] * 10
         candles = _make_candles(prices)
@@ -334,7 +334,7 @@ class TestScalpSLTP:
         assert sl is None  # Too tight -> skipped
 
     def test_scalp_sl_max_bound(self):
-        """Trade skipped when SL is too wide (> 100 pips)."""
+        """Trade skipped when SL is too wide (> 800 pips / $8.00)."""
         # Create candles with swing low very far from entry
         prices = [(2050, 2052, 2035, 2036)] * 5 + [(2050, 2060, 2049, 2055)] * 5
         candles = _make_candles(prices)
@@ -344,7 +344,7 @@ class TestScalpSLTP:
             candles_m1=candles,
             pip_value=0.01,
         )
-        # SL distance = 2060 - ~2034 = 2600 pips >> 100 pips
+        # SL distance = 2060 - ~2034 = 2600 pips >> 800 pips
         assert sl is None
 
     def test_scalp_tp_rr_buy(self):
@@ -528,7 +528,7 @@ class TestStrategyRegistryPhase10:
 class TestTrendScalpStrategyInteg:
     @pytest.mark.asyncio
     async def test_strategy_returns_none_when_flat(self):
-        """Strategy returns None when M1 momentum bias is flat (oscillating)."""
+        """Strategy returns None when M5 momentum bias is flat (oscillating)."""
         from app.broker.models import Candle
 
         broker = AsyncMock()
@@ -556,8 +556,8 @@ class TestTrendScalpStrategyInteg:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_strategy_uses_m1_for_bias(self):
-        """Strategy fetches M1 for bias detection, not M5."""
+    async def test_strategy_uses_m5_for_bias(self):
+        """Strategy fetches M5 for bias detection."""
         from app.broker.models import Candle
         from unittest.mock import call
 
@@ -583,6 +583,142 @@ class TestTrendScalpStrategyInteg:
         strat = TrendScalpStrategy()
         await strat.evaluate(broker, config)
 
-        # The first fetch_candles call should be M1 (bias + pullback)
+        # The first fetch_candles call should be M5 (bias + SL)
         first_call = broker.fetch_candles.call_args_list[0]
-        assert first_call == call("XAU_USD", "M1", count=20)
+        assert first_call == call("XAU_USD", "M5", count=20)
+
+    @pytest.mark.asyncio
+    async def test_strategy_skips_low_atr(self):
+        """Strategy returns None with 'low_volatility' when M5 ATR is too low."""
+        from app.broker.models import Candle
+
+        broker = AsyncMock()
+
+        # Build candles with tiny range so ATR is well below 80 pips ($0.80)
+        # Each candle: high-low = $0.05 → ATR ≈ 5 pips (need 80+)
+        # But bias must be non-flat so we reach the ATR gate.
+        trending_candles = [
+            Candle(
+                time=f"2025-01-01T00:{i:02d}:00Z",
+                open=2050.0 + i * 0.005,
+                high=2050.05 + i * 0.005,
+                low=2050.0 + i * 0.005,
+                close=2050.03 + i * 0.005,
+                volume=100,
+                complete=True,
+            )
+            for i in range(50)
+        ]
+        broker.fetch_candles.return_value = trending_candles
+
+        config = MagicMock()
+        config.trade_pair = "XAU_USD"
+
+        strat = TrendScalpStrategy()
+        result = await strat.evaluate(broker, config)
+
+        assert result is None
+        assert strat.last_insight.get("result") == "low_volatility"
+        assert strat.last_insight.get("m5_atr_pips") is not None
+        assert strat.last_insight["m5_atr_pips"] < strat.MIN_ATR_PIPS
+
+
+# ── Session-End Buffer ──────────────────────────────────────────────────
+
+
+class TestSessionEndBuffer:
+    """Engine should skip entries when too close to session close."""
+
+    @pytest.mark.asyncio
+    async def test_engine_skips_near_session_end(self):
+        """No entry when only 20 min left — within the 30-min buffer."""
+        from app.broker.models import AccountSummary
+        from app.config import Config
+        from app.engine import TradingEngine
+        from app.models.stream_config import StreamConfig
+        from datetime import datetime, timezone
+
+        config = Config(
+            oanda_account_id="test", oanda_api_token="test",
+            oanda_environment="practice", trade_pair="XAU_USD",
+            risk_per_trade_pct=0.5, max_drawdown_pct=10.0,
+            session_start_utc=7, session_end_utc=21,
+            db_path=":memory:", log_level="WARNING", health_port=8080,
+        )
+        sc = StreamConfig(
+            name="scalp-test", instrument="XAU_USD", strategy="trend_scalp",
+            timeframes=["H1", "M5", "M1"], poll_interval_seconds=60,
+            risk_per_trade_pct=0.5, max_concurrent_positions=2,
+            session_start_utc=7, session_end_utc=21, enabled=True,
+        )
+
+        broker = AsyncMock()
+        broker.get_account_summary.return_value = AccountSummary(
+            account_id="test", balance=10000.0, equity=10000.0,
+            open_position_count=0, currency="GBP",
+        )
+        broker.list_open_positions.return_value = []
+
+        # Use the real TrendScalpStrategy (has SESSION_END_BUFFER_MIN = 30)
+        strat = TrendScalpStrategy()
+        engine = TradingEngine(config, broker, strategy=strat, stream_config=sc)
+
+        # 20:40 UTC → only 20 min left, session ends at 21:00
+        utc_now = datetime(2025, 1, 1, 20, 40, tzinfo=timezone.utc)
+        result = await engine.run_once(utc_now=utc_now)
+
+        assert result["action"] == "skipped"
+        assert result["reason"] == "session_ending_soon"
+
+    @pytest.mark.asyncio
+    async def test_engine_allows_entry_well_before_session_end(self):
+        """Entry proceeds normally when > 30 min left in session."""
+        from app.broker.models import AccountSummary
+        from app.config import Config
+        from app.engine import TradingEngine
+        from app.models.stream_config import StreamConfig
+        from datetime import datetime, timezone
+
+        config = Config(
+            oanda_account_id="test", oanda_api_token="test",
+            oanda_environment="practice", trade_pair="XAU_USD",
+            risk_per_trade_pct=0.5, max_drawdown_pct=10.0,
+            session_start_utc=7, session_end_utc=21,
+            db_path=":memory:", log_level="WARNING", health_port=8080,
+        )
+        sc = StreamConfig(
+            name="scalp-test", instrument="XAU_USD", strategy="trend_scalp",
+            timeframes=["H1", "M5", "M1"], poll_interval_seconds=60,
+            risk_per_trade_pct=0.5, max_concurrent_positions=2,
+            session_start_utc=7, session_end_utc=21, enabled=True,
+        )
+
+        broker = AsyncMock()
+        broker.get_account_summary.return_value = AccountSummary(
+            account_id="test", balance=10000.0, equity=10000.0,
+            open_position_count=0, currency="GBP",
+        )
+        broker.list_open_positions.return_value = []
+
+        # Make strategy evaluate return None (flat bias) — normal flow
+        flat_candles_raw = []
+        from app.broker.models import Candle
+        for i in range(50):
+            flat_candles_raw.append(Candle(
+                time=f"2025-01-01T00:{i:02d}:00Z",
+                open=2050.0, high=2050.5, low=2049.5,
+                close=2050.0 + (0.005 if i % 2 == 0 else -0.005),
+                volume=100, complete=True,
+            ))
+        broker.fetch_candles.return_value = flat_candles_raw
+
+        strat = TrendScalpStrategy()
+        engine = TradingEngine(config, broker, strategy=strat, stream_config=sc)
+
+        # 14:00 UTC → 7 hours until session end, plenty of time
+        utc_now = datetime(2025, 1, 1, 14, 0, tzinfo=timezone.utc)
+        result = await engine.run_once(utc_now=utc_now)
+
+        # Should NOT be "session_ending_soon" — it should proceed to strategy
+        # (will likely be "no_signal" because of flat candles, but NOT session_ending_soon)
+        assert result["reason"] != "session_ending_soon"

@@ -9,7 +9,7 @@ from typing import Optional
 from app.config import Config
 from app.risk.drawdown import DrawdownTracker
 from app.risk.position_sizer import calculate_units
-from app.risk.sl_tp import calculate_sl, calculate_tp
+from app.risk.sl_tp import calculate_zone_anchored_risk
 from app.strategy.indicators import calculate_atr
 from app.strategy.models import CandleData
 from app.strategy.session_filter import is_in_session
@@ -90,12 +90,20 @@ class BacktestEngine:
             if signal is None:
                 continue
 
-            # 5 — Risk calculations
-            sl = calculate_sl(
-                signal.entry_price, signal.direction,
-                signal.sr_zone.price_level, atr,
+            # 5 — Risk calculations (zone-anchored)
+            rr = getattr(self._config, "rr_ratio", None) or 2.0
+            risk_levels = calculate_zone_anchored_risk(
+                entry_price=signal.entry_price,
+                direction=signal.direction,
+                sr_zones=zones,
+                atr=atr,
+                rr_ratio=rr,
+                triggering_zone=signal.sr_zone,
             )
-            tp = calculate_tp(signal.entry_price, signal.direction, sl, zones)
+            if risk_levels is None:
+                continue  # zone too close for valid SL
+            sl = risk_levels.sl
+            tp = risk_levels.tp
             sl_pips = abs(signal.entry_price - sl) / 0.0001
             units = calculate_units(
                 equity, self._config.risk_per_trade_pct, sl_pips,

@@ -1,0 +1,31 @@
+{
+  "instrument": "XAU_USD",
+  "download_date": "2026-02-20T03:46:24.344363+00:00",
+  "date_range": {
+    "start": "2025-02-25T03:44:58.751757+00:00",
+    "end": "2026-02-20T03:44:58.751757+00:00"
+  },
+  "pip_value": 0.01,
+  "timeframes": {
+    "M1": {
+      "rows": 5002,
+      "file": "M1.parquet",
+      "size_mb": 0.2
+    },
+    "M5": {
+      "rows": 4964,
+      "file": "M5.parquet",
+      "size_mb": 0.2
+    },
+    "M15": {
+      "rows": 4957,
+      "file": "M15.parquet",
+      "size_mb": 0.2
+    },
+    "H1": {
+      "rows": 4928,
+      "file": "H1.parquet",
+      "size_mb": 0.2
+    }
+  }
+}
