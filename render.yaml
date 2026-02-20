@@ -2,7 +2,6 @@ services:
   - type: web
     name: forgetrade
     runtime: python
-    rootDir: Forge
     buildCommand: |
       pip install -r requirements-deploy.txt
       cd dashboard && npm install && npm run build
