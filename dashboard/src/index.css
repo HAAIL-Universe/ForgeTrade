@@ -679,7 +679,119 @@ tr:hover { background: var(--bg-hover); }
   box-shadow: 0 0 6px var(--green);
 }
 
+/* ── Table scroll wrapper (for mobile) ──────────────────── */
+.table-scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
 /* ── Responsive ─────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .metrics { grid-template-columns: 1fr; }
+  /* Body */
+  body { padding: 8px; font-size: 13px; }
+
+  /* Header — stack vertically */
+  .header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+  .header h1 { font-size: 16px; }
+  .header-right { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 8px; }
+  .header-pairs { gap: 4px; }
+  .uptime { font-size: 11px; }
+
+  /* Metrics grid — single column */
+  .metrics { grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+  .metric { padding: 10px; }
+  .metric-value { font-size: 18px; }
+  .metric-label { font-size: 10px; }
+
+  /* Cards */
+  .card { margin-bottom: 8px; }
+  .card-body { padding: 0 10px 10px; }
+  .card-title { padding: 8px 10px; font-size: 11px; }
+  .card-title-right { gap: 6px; }
+  .signal-preview-reason { max-width: 120px; }
+
+  /* Tables — let scroll wrapper handle overflow */
+  .table-scroll { margin: 0 -10px; padding: 0 10px; }
+  table { min-width: 560px; }
+  th, td { padding: 6px 8px; font-size: 12px; }
+  th { font-size: 10px; }
+
+  /* Insight grid */
+  .insight-grid { grid-template-columns: 1fr; gap: 10px; }
+
+  /* Check items */
+  .check-item { flex-wrap: wrap; gap: 4px; }
+  .check-label { min-width: 100px; font-size: 12px; }
+  .check-detail { font-size: 12px; }
+
+  /* Stream tabs */
+  .stream-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; gap: 0; }
+  .stream-tab { padding: 5px 10px; font-size: 12px; white-space: nowrap; }
+
+  /* ForgeAgent — Overview */
+  .fa-metrics-grid { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .fa-ministat { padding: 6px 8px; }
+  .fa-ministat-value { font-size: 14px; }
+  .fa-ministat-label { font-size: 9px; }
+  .fa-status-row { gap: 8px; }
+  .fa-decision-row { gap: 4px; flex-wrap: wrap; }
+  .fa-dec-time { min-width: 50px; font-size: 10px; }
+  .fa-dec-action { min-width: 44px; }
+
+  /* ForgeAgent — Tabs */
+  .fa-tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; gap: 0; }
+  .fa-tab { padding: 6px 10px; font-size: 11px; white-space: nowrap; }
+
+  /* ForgeAgent — Failures */
+  .fa-fail-summary { grid-template-columns: repeat(2, 1fr); gap: 6px; }
+  .fa-fail-stat { padding: 6px 8px; }
+  .fa-fail-stat-val { font-size: 14px; }
+  .fa-exit-reasons { gap: 3px; }
+
+  /* ForgeAgent — Nudges */
+  .fa-config-grid { grid-template-columns: 1fr; gap: 2px; }
+  .fa-nudge-row { gap: 4px; padding: 4px 6px; }
+  .fa-nudge-param { min-width: 80px; }
+  .fa-nudge-reason { min-width: 0; }
+
+  /* ForgeAgent — Training */
+  .fa-bar-label { min-width: 80px; font-size: 10px; }
+  .fa-detail-grid { grid-template-columns: 1fr; }
+  .fa-comparison { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .fa-table { min-width: 480px; }
+
+  /* Agent metric card (overview row) */
+  .agent-log-entry { gap: 4px; flex-wrap: wrap; }
+  .agent-log-time { min-width: 48px; font-size: 10px; }
+  .agent-log-action { min-width: 40px; font-size: 10px; }
+  .agent-log-price { min-width: 48px; }
+
+  /* Settings */
+  .settings-row { flex-wrap: wrap; gap: 6px; }
+  .settings-label { min-width: 120px; font-size: 12px; }
+  .settings-hint { margin-left: 0; width: 100%; }
+  .stream-settings-table { min-width: 480px; }
+
+  /* Controls */
+  .controls-bar { gap: 6px; }
+  .btn-ctrl { padding: 6px 12px; font-size: 11px; }
+  .btn-estop { margin-left: 0; }
+
+  /* Trade filters */
+  .trade-filters { gap: 4px; }
+  .filter-pill { padding: 3px 7px; font-size: 10px; }
+
+  /* Footer */
+  .footer { font-size: 11px; padding: 6px; }
+
+  /* Zone chips */
+  .zone-chip { font-size: 11px; padding: 2px 6px; margin: 1px 2px; }
+
+  /* Drawdown bar */
+  .upnl-positions { gap: 8px; }
+  .upnl-pair { font-size: 12px; }
+  .upnl-value { font-size: 14px; }
 }

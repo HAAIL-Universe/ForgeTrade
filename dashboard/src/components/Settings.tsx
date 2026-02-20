@@ -69,6 +69,7 @@ export default function Settings({ onSaved }: SettingsProps) {
     <>
       {/* Per-stream settings */}
       <div className="stream-settings-label">Per-Stream Settings</div>
+      <div className="table-scroll">
       <table className="stream-settings-table">
         <thead>
           <tr>
@@ -107,6 +108,7 @@ export default function Settings({ onSaved }: SettingsProps) {
           ))}
         </tbody>
       </table>
+      </div>
 
       {/* Global settings */}
       <div className="stream-settings-label" style={{ marginTop: 16 }}>Global Settings</div>

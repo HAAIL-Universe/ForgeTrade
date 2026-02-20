@@ -58,7 +58,7 @@ export default function TradeHistoryTable({ trades }: Props) {
           </span>
         )}
       </div>
-      <table>
+      <div className="table-scroll"><table>
         <thead><tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>Exit</th><th>SL</th><th>TP</th><th>P&L</th><th>Reason</th><th>Duration</th><th>Closed</th></tr></thead>
         <tbody>
           {filtered.length === 0 ? (
@@ -84,7 +84,7 @@ export default function TradeHistoryTable({ trades }: Props) {
             })
           )}
         </tbody>
-      </table>
+      </table></div>
     </>
   )
 }

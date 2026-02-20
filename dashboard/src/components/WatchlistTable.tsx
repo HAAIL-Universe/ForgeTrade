@@ -8,15 +8,15 @@ interface Props {
 export default function WatchlistTable({ signal }: Props) {
   if (!signal || signal.status === 'no_signal') {
     return (
-      <table>
+      <div className="table-scroll"><table>
         <thead><tr><th>Pair</th><th>Dir</th><th>Zone</th><th>Reason</th><th>Status</th></tr></thead>
         <tbody><tr className="empty-row"><td colSpan={5}>No pending signals</td></tr></tbody>
-      </table>
+      </table></div>
     )
   }
 
   return (
-    <table>
+    <div className="table-scroll"><table>
       <thead><tr><th>Pair</th><th>Dir</th><th>Zone</th><th>Reason</th><th>Status</th></tr></thead>
       <tbody>
         <tr>
@@ -27,6 +27,6 @@ export default function WatchlistTable({ signal }: Props) {
           <td>{signal.status ?? '—'}</td>
         </tr>
       </tbody>
-    </table>
+    </table></div>
   )
 }

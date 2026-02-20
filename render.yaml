@@ -6,7 +6,7 @@ services:
     buildCommand: |
       pip install -r requirements.txt
       cd dashboard && npm install && npm run build
-    startCommand: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
+    startCommand: gunicorn app.main:app -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 120
     envVars:
       - key: PYTHON_VERSION
         value: "3.12"
@@ -14,8 +14,8 @@ services:
         value: "20"
       - key: OANDA_ACCOUNT_ID
         sync: false
-      - key: OANDA_API_KEY
+      - key: OANDA_API_TOKEN
         sync: false
-      - key: OANDA_ENV
+      - key: OANDA_ENVIRONMENT
         value: practice
     healthCheckPath: /health

@@ -23,10 +23,10 @@ export default function StreamsTable({ streams, activeTab, onSelectStream }: Pro
 
   if (!keys.length) {
     return (
-      <table>
+      <div className="table-scroll"><table>
         <thead><tr><th>Strategy</th><th>Instrument</th><th>Status</th><th>Last Signal</th><th></th></tr></thead>
         <tbody><tr className="empty-row"><td colSpan={5}>No streams configured</td></tr></tbody>
-      </table>
+      </table></div>
     )
   }
 
@@ -41,7 +41,7 @@ export default function StreamsTable({ streams, activeTab, onSelectStream }: Pro
   }
 
   return (
-    <table>
+    <div className="table-scroll"><table>
       <thead><tr><th>Strategy</th><th>Instrument</th><th>Status</th><th>Last Signal</th><th></th></tr></thead>
       <tbody>
         {keys.map(k => {
@@ -82,6 +82,6 @@ export default function StreamsTable({ streams, activeTab, onSelectStream }: Pro
           )
         })}
       </tbody>
-    </table>
+    </table></div>
   )
 }

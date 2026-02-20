@@ -4,9 +4,11 @@ Boots the FastAPI internal server and provides the CLI entry point for
 paper, live, and backtest modes.
 """
 
+import asyncio
 import logging
 import os
 import pathlib
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse, HTMLResponse
@@ -14,7 +16,89 @@ from fastapi.staticfiles import StaticFiles
 
 from app.api.routers import router
 
-app = FastAPI(title="ForgeTrade Internal API", version="0.1.0")
+logger = logging.getLogger("forgetrade")
+
+# ── Background engine task (populated by lifespan) ───────────────────────
+_engine_task: asyncio.Task | None = None
+
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Startup / shutdown hook used when running under gunicorn/uvicorn.
+
+    Initialises config, broker, DB, engine manager and launches trading
+    streams as a background ``asyncio`` task so the API server can serve
+    requests concurrently.
+    """
+    global _engine_task  # noqa: PLW0603
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    try:
+        from app.broker.oanda_client import OandaClient
+        from app.config import load_config, load_streams
+        from app.engine_manager import EngineManager
+        from app.repos.db import init_db
+        from app.repos.trade_repo import TradeRepo
+        from app.api.routers import configure_routers, update_bot_status
+
+        config = load_config()
+        init_db(config.db_path)
+
+        broker = OandaClient(config)
+        streams = load_streams()
+        manager = EngineManager(config=config, broker=broker, streams=streams)
+        manager.build_engines()
+
+        forge_json_path = pathlib.Path(__file__).resolve().parent.parent / "forge.json"
+        trade_repo = TradeRepo(config.db_path)
+        configure_routers(
+            trade_repo=trade_repo,
+            broker=broker,
+            engine_manager=manager,
+            forge_json_path=forge_json_path,
+        )
+
+        # Push initial status for each stream
+        for sname in manager.stream_names:
+            eng = manager.engines[sname]
+            update_bot_status(
+                stream_name=sname,
+                mode="paper",
+                pair=eng.instrument,
+                running=False,
+            )
+
+        # Launch engines in the background so the API server stays responsive
+        _engine_task = asyncio.create_task(manager.run_all())
+        logger.info(
+            "ForgeTrade lifespan started — %d stream(s) launched.",
+            len(manager.stream_names),
+        )
+
+        yield  # ← app is running
+
+    except Exception as exc:
+        logger.error("Lifespan startup failed: %s", exc, exc_info=True)
+        yield  # still let the server run so /health can report
+        return
+
+    # Shutdown
+    if _engine_task and not _engine_task.done():
+        logger.info("Shutting down trading engines…")
+        manager.stop_all()
+        _engine_task.cancel()
+        try:
+            await _engine_task
+        except (asyncio.CancelledError, Exception):
+            pass
+    logger.info("ForgeTrade lifespan shutdown complete.")
+
+
+app = FastAPI(title="ForgeTrade Internal API", version="0.1.0", lifespan=lifespan)
 app.include_router(router)
 
 # ── Static files (dashboard) ────────────────────────────────────────────
@@ -32,8 +116,6 @@ if os.path.isdir(_dist_dir):
 # Keep legacy /dashboard mount for backward compatibility
 if os.path.isdir(_legacy_dir):
     app.mount("/dashboard", StaticFiles(directory=_legacy_dir), name="dashboard")
-
-logger = logging.getLogger("forgetrade")
 
 
 @app.get("/health")

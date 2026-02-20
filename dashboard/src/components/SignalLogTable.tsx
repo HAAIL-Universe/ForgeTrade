@@ -18,15 +18,15 @@ interface Props {
 export default function SignalLogTable({ signals }: Props) {
   if (!signals.length) {
     return (
-      <table>
+      <div className="table-scroll"><table>
         <thead><tr><th>Time</th><th>Pair</th><th>Dir</th><th>Status</th><th>Reason</th></tr></thead>
         <tbody><tr className="empty-row"><td colSpan={5}>No signal history</td></tr></tbody>
-      </table>
+      </table></div>
     )
   }
 
   return (
-    <table>
+    <div className="table-scroll"><table>
       <thead><tr><th>Time</th><th>Pair</th><th>Dir</th><th>Status</th><th>Reason</th></tr></thead>
       <tbody>
         {signals.map((sig, i) => (
@@ -39,6 +39,6 @@ export default function SignalLogTable({ signals }: Props) {
           </tr>
         ))}
       </tbody>
-    </table>
+    </table></div>
   )
 }

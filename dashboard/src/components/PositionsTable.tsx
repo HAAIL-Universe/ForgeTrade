@@ -8,15 +8,15 @@ interface Props {
 export default function PositionsTable({ positions }: Props) {
   if (!positions.length) {
     return (
-      <table>
+      <div className="table-scroll"><table>
         <thead><tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>SL</th><th>TP</th><th>Opened</th><th>uP&L</th></tr></thead>
         <tbody><tr className="empty-row"><td colSpan={8}>No open positions</td></tr></tbody>
-      </table>
+      </table></div>
     )
   }
 
   return (
-    <table>
+    <div className="table-scroll"><table>
       <thead><tr><th>Pair</th><th>Dir</th><th>Units</th><th>Entry</th><th>SL</th><th>TP</th><th>Opened</th><th>uP&L</th></tr></thead>
       <tbody>
         {positions.map((p, i) => {
@@ -35,6 +35,6 @@ export default function PositionsTable({ positions }: Props) {
           )
         })}
       </tbody>
-    </table>
+    </table></div>
   )
 }
