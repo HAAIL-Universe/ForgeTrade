@@ -2,9 +2,10 @@ services:
   - type: web
     name: forgetrade
     runtime: python
+    rootDir: Forge
     buildCommand: |
       pip install -r requirements.txt
-      cd dashboard && npm install && npm run build && cd ..
+      cd dashboard && npm install && npm run build
     startCommand: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT
     envVars:
       - key: PYTHON_VERSION
