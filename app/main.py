@@ -37,6 +37,7 @@ async def lifespan(application: FastAPI):
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
+    manager = None
     try:
         from app.broker.oanda_client import OandaClient
         from app.config import load_config, load_streams
@@ -46,6 +47,11 @@ async def lifespan(application: FastAPI):
         from app.api.routers import configure_routers, update_bot_status
 
         config = load_config()
+
+        # Ensure data directory exists (Render has an ephemeral filesystem)
+        db_dir = pathlib.Path(config.db_path).parent
+        db_dir.mkdir(parents=True, exist_ok=True)
+
         init_db(config.db_path)
 
         broker = OandaClient(config)
@@ -89,7 +95,8 @@ async def lifespan(application: FastAPI):
     # Shutdown
     if _engine_task and not _engine_task.done():
         logger.info("Shutting down trading engines…")
-        manager.stop_all()
+        if manager:
+            manager.stop_all()
         _engine_task.cancel()
         try:
             await _engine_task

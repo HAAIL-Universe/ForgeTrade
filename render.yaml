@@ -4,7 +4,7 @@ services:
     runtime: python
     rootDir: Forge
     buildCommand: |
-      pip install -r requirements.txt
+      pip install -r requirements-deploy.txt
       cd dashboard && npm install && npm run build
     startCommand: gunicorn app.main:app -w 1 -k uvicorn.workers.UvicornWorker --bind 0.0.0.0:$PORT --timeout 120
     envVars:

@@ -1,0 +1,8 @@
+# Core web dependencies (no ML/torch — saves ~2GB install + ~500MB RAM)
+# The RL filter gracefully degrades via try/except ImportError in engine.py
+fastapi>=0.104.0
+uvicorn>=0.24.0
+gunicorn>=21.2.0
+httpx>=0.25.0
+python-dotenv>=1.0.0
+aiofiles>=23.0.0
