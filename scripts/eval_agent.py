@@ -22,7 +22,7 @@ from typing import Optional
 import numpy as np
 from stable_baselines3 import PPO
 
-from app.rl.data_collector import load_from_parquet, split_data, DATA_DIR
+from app.rl.data_collector import load_from_parquet, split_data, split_data_by_date, DATA_DIR
 from app.rl.environment import (
     AlignedData, EnvConfig, ForgeTradeEnv, simulate_trade,
 )
@@ -370,17 +370,14 @@ def run_evaluation(
             import pandas as pd
             dfs[gran] = pd.DataFrame()
 
-    # Split: 70/15/15 — use test set
-    splits = {}
-    for gran in ["M1", "M5", "M15", "H1"]:
-        _tr, _va, te = split_data(dfs[gran], 0.70, 0.15)
-        splits[gran] = te
+    # Split: 70/15/15 by M5 date boundaries — use test set
+    splits = split_data_by_date(dfs, reference_gran="M5", train_pct=0.70, val_pct=0.15)
 
     test_data = AlignedData.from_dataframes(
-        m1_df=splits["M1"],
-        m5_df=splits["M5"],
-        m15_df=splits["M15"],
-        h1_df=splits["H1"],
+        m1_df=splits["M1"][2],
+        m5_df=splits["M5"][2],
+        m15_df=splits["M15"][2],
+        h1_df=splits["H1"][2],
     )
 
     # Run evaluation

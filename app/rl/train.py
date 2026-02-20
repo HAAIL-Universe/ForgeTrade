@@ -20,7 +20,7 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 
-from app.rl.data_collector import load_from_parquet, split_data, DATA_DIR
+from app.rl.data_collector import load_from_parquet, split_data, split_data_by_date, DATA_DIR
 from app.rl.environment import AlignedData, EnvConfig, ForgeTradeEnv, NoisyObservationWrapper
 from app.rl.network import build_agent, count_parameters
 from app.rl.rewards import RewardConfig
@@ -76,11 +76,8 @@ def load_training_data(
             import pandas as pd
             dfs[gran] = pd.DataFrame()
 
-    # Split each timeframe chronologically using the same ratios
-    splits = {}
-    for gran in ["M1", "M5", "M15", "H1"]:
-        tr, va, te = split_data(dfs[gran], train_pct, val_pct)
-        splits[gran] = (tr, va, te)
+    # Split all timeframes using M5 date boundaries for consistent coverage
+    splits = split_data_by_date(dfs, reference_gran="M5", train_pct=train_pct, val_pct=val_pct)
 
     train_data = AlignedData.from_dataframes(
         m1_df=splits["M1"][0],

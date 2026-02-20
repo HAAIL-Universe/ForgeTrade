@@ -480,5 +480,102 @@
       "reward_min": -2.0,
       "reward_max": 2.0
     }
+  },
+  {
+    "timestamp": "2026-02-20T07:07:44.832860+00:00",
+    "label": "post-fix-check",
+    "model_path": "models/forge_agent/best_model.zip",
+    "instrument": "XAU_USD",
+    "parameters": 20771,
+    "training_timesteps": 100000,
+    "eval_episodes": 10,
+    "metrics": {
+      "win_rate": 0.2308,
+      "take_rate": 0.6842,
+      "profit_factor": 0.9,
+      "max_drawdown": 11.4158,
+      "avg_r_multiple": -0.0769,
+      "sharpe_ratio": -6280000.0,
+      "mean_episode_reward": -6.28,
+      "total_trades_taken": 130,
+      "total_signals_seen": 190
+    },
+    "failures": {
+      "total_signals": 190,
+      "total_taken": 130,
+      "total_vetoed": 60,
+      "total_wins": 30,
+      "total_losses": 100,
+      "exit_reasons": {
+        "sl_hit": 100
+      },
+      "worst_hours": [],
+      "volatility": {
+        "low": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "mid": {
+          "losses": 0,
+          "total": 0,
+          "loss_rate": 0.0
+        },
+        "high": {
+          "losses": 100,
+          "total": 130,
+          "loss_rate": 0.769
+        }
+      },
+      "trend_alignment": {
+        "aligned": {
+          "losses": 100,
+          "total": 100,
+          "loss_rate": 1.0
+        },
+        "counter": {
+          "losses": 0,
+          "total": 30,
+          "loss_rate": 0.0
+        }
+      },
+      "hold_duration": {
+        "very_fast_0_5min": 100,
+        "short_5_15min": 0,
+        "mid_15_30min": 0,
+        "long_30plus_min": 0
+      },
+      "direction": {
+        "buy": {
+          "losses": 0,
+          "total": 30,
+          "loss_rate": 0.0
+        },
+        "sell": {
+          "losses": 100,
+          "total": 100,
+          "loss_rate": 1.0
+        }
+      },
+      "high_spread": {
+        "losses": 100,
+        "total": 130,
+        "loss_rate": 0.769
+      },
+      "failure_clusters": [
+        {
+          "pattern": "high_spread",
+          "description": "Spread >4 pips: 100/130 losses (77%)",
+          "impact": 100,
+          "suggestion": "lower max_spread_pips"
+        },
+        {
+          "pattern": "fast_sl_hit",
+          "description": "SL hit <5min: 100/100 losses (100%)",
+          "impact": 100,
+          "suggestion": "widen sl_buffer_pips"
+        }
+      ]
+    }
   }
 ]

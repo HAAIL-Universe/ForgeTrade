@@ -1,17 +1,17 @@
 {
-  "iteration": 4,
+  "iteration": 1,
   "phase": "training",
-  "detail": "Training 100,000 timesteps\u2026",
-  "best_avg_r": 0.0028,
-  "best_iteration": 2,
+  "detail": "Training 200,000 timesteps\u2026",
+  "best_avg_r": -999.0,
+  "best_iteration": 0,
   "last_nudge": {
-    "iteration": 4,
-    "param": "rr_ratio",
+    "iteration": 1,
+    "param": "ema_pullback_period",
     "direction": -1,
-    "old_value": 1.4,
-    "new_value": 1.3,
-    "reason": "Fast SL hits \u2192 tighter R:R to reduce required move size",
+    "old_value": 9,
+    "new_value": 8,
+    "reason": "High-spread losses \u2192 faster EMA for tighter pullback entry",
     "reverted": false
   },
-  "updated_at": "2026-02-20T07:05:54.993268+00:00"
+  "updated_at": "2026-02-20T07:16:46.797510+00:00"
 }

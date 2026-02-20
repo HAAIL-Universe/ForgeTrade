@@ -33,10 +33,13 @@ class TestLoadTrainingData:
     def test_returns_three_aligned_data(self, mock_exists, mock_load):
         """load_training_data returns train, val, test AlignedData tuples."""
         import pandas as pd
-        # Create enough rows for a meaningful split
-        n = 100
+        from datetime import datetime, timedelta
+        # Create enough rows with monotonically increasing timestamps
+        # spanning ~20 days so date-based splitting has room for 3 splits
+        n = 200
+        base = datetime(2025, 1, 1, 8, 0, 0)
         df = pd.DataFrame({
-            "time": [f"2025-01-{(i % 28)+1:02d}T12:00:00Z" for i in range(n)],
+            "time": [(base + timedelta(hours=i * 2)).strftime("%Y-%m-%dT%H:%M:%SZ") for i in range(n)],
             "open": np.random.uniform(4900, 5100, n),
             "high": np.random.uniform(5000, 5200, n),
             "low": np.random.uniform(4800, 5000, n),

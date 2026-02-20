@@ -53,11 +53,12 @@ class TestLoadConfig:
         assert cfg.log_level == "INFO"
         assert cfg.health_port == 8080
 
-    def test_config_missing_var(self, monkeypatch):
-        # Only set one of three required vars
+    def test_config_missing_var(self, monkeypatch, tmp_path):
+        # Only set one of three required vars; use a non-existent env_path
+        # so load_dotenv doesn't re-populate from the real .env file
         monkeypatch.setenv("OANDA_ACCOUNT_ID", "test-id")
         with pytest.raises(ValueError, match="OANDA_API_TOKEN"):
-            load_config()
+            load_config(env_path=str(tmp_path / "nonexistent.env"))
 
     def test_environment_switching_practice(self, monkeypatch):
         _set_required(monkeypatch)

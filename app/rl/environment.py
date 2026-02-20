@@ -323,11 +323,14 @@ class ForgeTradeEnv(gym.Env):
 
         self._state_builder = ForgeStateBuilder()
 
+        # Pre-scan signals once (deterministic from data + config)
+        self._all_signals: list[dict] = self._prescan_signals()
+
         # Episode state
         self._m5_idx: int = 0
         self._step_count: int = 0
         self._account: AccountState = AccountState()
-        self._signals: list[dict] = []  # Pre-scanned signals
+        self._signals: list[dict] = []  # Slice for current episode
         self._signal_idx: int = 0
 
         # Episode statistics
@@ -468,8 +471,8 @@ class ForgeTradeEnv(gym.Env):
         self._total_signals = 0
         self._total_r = 0.0
 
-        # Pre-scan signals
-        self._signals = self._prescan_signals()
+        # Use cached signals
+        self._signals = self._all_signals
         if not self._signals:
             # If no signals found, return zero observation
             self._signal_idx = 0

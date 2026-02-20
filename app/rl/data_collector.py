@@ -99,6 +99,79 @@ def split_data(
     return train, val, test
 
 
+def split_data_by_date(
+    dfs: dict[str, pd.DataFrame],
+    reference_gran: str = "M5",
+    train_pct: float = 0.70,
+    val_pct: float = 0.15,
+) -> dict[str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]]:
+    """Split all timeframes using date boundaries from the *reference* granularity.
+
+    First trims all timeframes to the period where ALL timeframes have data,
+    then splits by date so every split has consistent coverage across timeframes.
+
+    Returns ``{gran: (train_df, val_df, test_df)}``.
+    """
+    # Parse timestamps for each timeframe
+    ts_map: dict[str, pd.Series] = {}
+    for gran, df in dfs.items():
+        if df.empty:
+            continue
+        ts_map[gran] = pd.to_datetime(df["time"], utc=True)
+
+    # Find overlapping date range across all non-empty timeframes
+    overlap_start = max(ts.iloc[0] for ts in ts_map.values())
+    overlap_end = min(ts.iloc[-1] for ts in ts_map.values())
+
+    if overlap_start >= overlap_end:
+        logger.warning(
+            "No temporal overlap between timeframes! "
+            "Falling back to per-timeframe row splits."
+        )
+        result: dict[str, tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]] = {}
+        for gran, df in dfs.items():
+            tr, va, te = split_data(df, train_pct, val_pct)
+            result[gran] = (tr, va, te)
+        return result
+
+    # Trim all timeframes to the overlapping window
+    trimmed: dict[str, pd.DataFrame] = {}
+    for gran, df in dfs.items():
+        ts = ts_map.get(gran)
+        if ts is None:
+            trimmed[gran] = df
+            continue
+        mask = (ts >= overlap_start) & (ts <= overlap_end)
+        trimmed[gran] = df[mask].reset_index(drop=True)
+
+    # Use reference granularity to determine date split points
+    ref = trimmed[reference_gran]
+    ref_ts = pd.to_datetime(ref["time"], utc=True)
+
+    n = len(ref)
+    train_end_idx = int(n * train_pct)
+    val_end_idx = int(n * (train_pct + val_pct))
+
+    train_cutoff = ref_ts.iloc[train_end_idx]
+    val_cutoff = ref_ts.iloc[val_end_idx]
+
+    logger.info(
+        "Date-split: overlap=%s→%s, train<=%s, val<=%s",
+        overlap_start.isoformat(), overlap_end.isoformat(),
+        train_cutoff.isoformat(), val_cutoff.isoformat(),
+    )
+
+    result = {}
+    for gran, df in trimmed.items():
+        ts = pd.to_datetime(df["time"], utc=True)
+        tr = df[ts < train_cutoff].reset_index(drop=True)
+        va = df[(ts >= train_cutoff) & (ts < val_cutoff)].reset_index(drop=True)
+        te = df[ts >= val_cutoff].reset_index(drop=True)
+        result[gran] = (tr, va, te)
+
+    return result
+
+
 # ── Parquet I/O ──────────────────────────────────────────────────────────
 
 
